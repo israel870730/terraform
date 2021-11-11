@@ -1,7 +1,7 @@
 instance_count="1"
 ami_id="ami-00f0daacf2cfab09e"
 instance_type="t2.micro"
-#key_name="key_catalogo"
+key_name="key_catalogo"
 tags={Name="ec2_catalogo",Enviroment="Dev"}
 sg_name = "group_catalogo"
 ingress_rules = [
@@ -45,5 +45,5 @@ egress_rules = [
         cidr_blocks = ["0.0.0.0/0"]
     }
 ]
-#key_name_public="key_catalogo"
-#public_key = "~/.ssh/id_rsa.pub"
+key_name_public="key_catalogo"
+public_key = "~/.ssh/id_rsa.pub"

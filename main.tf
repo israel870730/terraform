@@ -43,10 +43,10 @@ resource "aws_instance" "ec2_auto" {
     #inline = ["echo hello","docker run -it -d -p 8080:80 870730/curso-terraform:v1"]
   }
 }
-#resource "aws_key_pair" "deployer" {
-#  key_name   = var.key_name_public
-#  public_key = var.public_key
-#}
+resource "aws_key_pair" "deployer" {
+  key_name   = var.key_name_public
+  public_key = var.public_key
+}
 output "instance_ips" {
   value = aws_instance.ec2_auto.*.public_ip
 }
