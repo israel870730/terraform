@@ -2,6 +2,8 @@
 **/.terraform/*
 
 terraform.lock.hcl
+git-credentials
+.terraform.lock.hcl
 
 # .tfstate files
 *.tfstate
