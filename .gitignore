@@ -4,7 +4,7 @@
 terraform.lock.hcl
 git-credentials
 .terraform.lock.hcl
-
+modulos/bucket_s3/.terraform.lock.hcl
 # .tfstate files
 *.tfstate
 *.tfstate.*
