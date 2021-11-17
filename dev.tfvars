@@ -45,5 +45,4 @@ egress_rules = [
         cidr_blocks = ["0.0.0.0/0"]
     }
 ]
-key_name_public="key_catalogo"
 public_key = "~/.ssh/id_rsa.pub"

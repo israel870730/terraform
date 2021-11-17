@@ -11,11 +11,8 @@ variable "tags" {
 variable "key_name" {
   
 }
-variable "key_name_public"{
-
-}
 variable "public_key"{
-
+description = "Public key path"
 }
 variable "sg_name" {
 
