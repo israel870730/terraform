@@ -1,5 +1,4 @@
 # terraform
-Ficheros de terraform
 
 ## Step #1 
 terraform init
