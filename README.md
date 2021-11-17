@@ -1,11 +1,11 @@
 # terraform
 Ficheros de terraform
 
-Step #1 
+## Step #1 
 terraform init
 
-Step #2
+## Step #2
 terraform apply -var-file dev.tfvars
 
-Step #3
+## Step #3
 terraform destroy -var-file dev.tfvars -auto-approve
