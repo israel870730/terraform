@@ -3,6 +3,7 @@ provider "aws" {
 }
 module "crear-ec2" {
   source = "./modulos/instance"
+  #source = "https://github.com/israel870730/terraform/tree/module_ec2"
   ami_id = var.ami_id
   instance_type = var.instance_type
   tags = var.tags
