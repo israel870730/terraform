@@ -1,4 +1,4 @@
-# terraform
+# Terraform
 
 ## Step #1 
 terraform init
