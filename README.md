@@ -1,2 +1,2 @@
 # Terraform
-En esta rama estamos usando los modulos directamente de git
+En esta rama importamos los modulos terraform de EC2, VPC y SG creados por la compañia hacia mi GITHUB y estamos usando estos modulos directamente de git
