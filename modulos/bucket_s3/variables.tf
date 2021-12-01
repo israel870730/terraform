@@ -1,11 +1,11 @@
-variable "bucket_name" {
-  default= "catalogo-auto"
+variable "bucket" {
+  description = "Nombre del Bucket"
 }
 
 variable "acl" {
-  default = "private"
+  description = "Permisos del bucket"
 }
 
 variable "tags" {
-  default = {Enviroment = "Dev", CreateBy = "catalogo"}
+  description = "Tags del Bucket"
 }

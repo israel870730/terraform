@@ -26,3 +26,14 @@ variable "instance_count" {
 variable "egress_rules" {
 
 }
+variable "bucket" {
+  description = "Nombre del Bucket"
+}
+
+variable "acl" {
+  description = "Permisos del bucket"
+}
+
+variable "tags_s3" {
+  description = "Tags del Bucket"
+}

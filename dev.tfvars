@@ -46,3 +46,7 @@ egress_rules = [
     }
 ]
 public_key = "~/.ssh/id_rsa.pub"
+
+bucket="bucket-prueba-israel870730"
+acl="private"
+tags_s3={Enviroment="Test",CreateBy="catalogo"}

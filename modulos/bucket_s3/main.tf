@@ -1,8 +1,8 @@
 provider "aws" {
-  region="us-west-2"
+  region = "us-east-1"
 }
 resource "aws_s3_bucket" "catalogo-auto" {
-  bucket = var.bucket_name
+  bucket = var.bucket
   acl = var.acl
   tags = var.tags
 }
