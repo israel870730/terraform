@@ -18,8 +18,9 @@ output "module_instance_ip" {
   value = module.crear-ec2.instance_ips
 }
 module "crear-s3" {
-  source = "./modulos/bucket_s3"
+  source = "./modulos/bucket"
   bucket = var.bucket
   acl = var.acl
   tags = var.tags_s3
 }
+

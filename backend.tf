@@ -3,5 +3,8 @@ terraform {
     bucket = "safe-state-terraform"
     key    = "dev/state"
     region = "us-east-1"
+    encrypt = true
+    dynamodb_table = "safe-state-terraform"
+    kms_key_id = "arn:aws:kms:us-east-1:304959390434:key/7a0ede15-f366-4387-b3e2-f3a38cdda135"
   }
 }
