@@ -23,4 +23,3 @@ module "crear-s3" {
   acl = var.acl
   tags = var.tags_s3
 }
-
