@@ -51,7 +51,7 @@ resource "aws_route_table_association" "a" {
   subnet_id      = aws_subnet.subnet-1.id
   route_table_id = aws_route_table.stage-route-table.id
 }
-# 6-  Create Security Group to allo por 22,80,443
+# 6-  Create Security Group to allow por 22,80,443
 resource "aws_security_group" "allow_web" {
   name        = "allow_web_traffic"
   description = "Allow TLS inbound traffic"
@@ -137,7 +137,6 @@ resource "aws_instance" "web-server-instance"{
 
 resource "aws_key_pair" "stage" {
   key_name   = "key_stage"
-  #public_key = "Aqui va tu llave publica"
   public_key = "${file(var.public_key)}"
 }
 
@@ -154,4 +153,20 @@ variable "public_key" {
 
 output "instance_ips" {
   value = aws_instance.web-server-instance.*.public_ip
+}
+
+# 10 Craate vaolume of 10GB
+resource "aws_ebs_volume" "st1" {
+ availability_zone = aws_instance.web-server-instance.availability_zone
+ size = 10
+ tags= {
+    Name = "My volume"
+  }
+}
+
+# 11 Attachment volume EBS to instance
+resource "aws_volume_attachment" "ebs" {
+ device_name = "/dev/sdh"
+ volume_id = aws_ebs_volume.st1.id
+ instance_id = aws_instance.web-server-instance.id
 }
