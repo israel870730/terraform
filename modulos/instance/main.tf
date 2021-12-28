@@ -51,3 +51,4 @@ resource "aws_key_pair" "deployer" {
 output "instance_ips" {
   value = aws_instance.ec2_auto.*.public_ip
 }
+
