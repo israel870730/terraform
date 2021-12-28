@@ -137,8 +137,21 @@ resource "aws_instance" "web-server-instance"{
 
 resource "aws_key_pair" "stage" {
   key_name   = "key_stage"
-  public_key = "Aqui va tu llave publica"
+  #public_key = "Aqui va tu llave publica"
+  public_key = "${file(var.public_key)}"
 }
+
+#variable "public_key"{
+#description = "Public key path"
+#type = "string"
+#default = "~/.ssh/id_rsa.pub"
+#}
+
+variable "public_key" {
+  description = "Public key path"
+  default = "~/.ssh/id_rsa.pub"
+}
+
 output "instance_ips" {
   value = aws_instance.web-server-instance.*.public_ip
 }
