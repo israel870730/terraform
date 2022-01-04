@@ -1,25 +1,38 @@
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 3.27"
+    }
+  }
+
+  required_version = ">= 0.14.9"
+}
+
 provider "aws" {
   region = "us-east-1"
+}
+module "sg" {
+  source        = "./modulos/sg"
+  name       = var.name
+  ingress_rules = var.ingress_rules
+  egress_rules  = var.egress_rules
 }
 module "crear-ec2" {
   source = "./modulos/instance"
   #source = "https://github.com/israel870730/terraform/tree/module_ec2"
-  ami_id = var.ami_id
-  instance_type = var.instance_type
-  tags = var.tags
-  key_name = var.key_name
-  public_key = var.public_key
-  sg_name = var.sg_name
-  ingress_rules = var.ingress_rules
+  ami_id         = var.ami_id
+  instance_type  = var.instance_type
+  tags           = var.tags
+  key_name       = var.key_name
+  public_key     = var.public_key
   instance_count = var.instance_count
-  egress_rules = var.egress_rules
+  vpc_security_group_ids = [module.sg.id]
 }
-output "module_instance_ip" {
-  value = module.crear-ec2.instance_ips
-}
+
 module "crear-s3" {
   source = "./modulos/bucket"
   bucket = var.bucket
-  acl = var.acl
-  tags = var.tags_s3
+  acl    = var.acl
+  tags   = var.tags_s3
 }

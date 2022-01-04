@@ -1,20 +1,20 @@
 variable "ami_id" {
-  default=""
+  default     = ""
   description = "Ami Id"
 }
 variable "instance_type" {
-  
+
 }
 variable "tags" {
-  type = map
+  type = map(any)
 }
 variable "key_name" {
-  
+
 }
-variable "public_key"{
-description = "Public key path"
+variable "public_key" {
+  description = "Public key path"
 }
-variable "sg_name" {
+variable "name" {
 
 }
 variable "ingress_rules" {
@@ -37,3 +37,7 @@ variable "acl" {
 variable "tags_s3" {
   description = "Tags del Bucket"
 }
+
+#variable "this_security_group_id" {
+#  description = "this_security_group_id"
+#}

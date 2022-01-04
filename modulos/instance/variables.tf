@@ -1,36 +1,30 @@
 variable "ami_id" {
-  default=""
+  default     = ""
   description = "Ami Id"
 }
 variable "instance_type" {
-description = "Public key path"
-  
+  description = "Public key path"
+
 }
 variable "tags" {
-description = "Variable para los tags"
-  type = map
+  description = "Variable para los tags"
+  type        = map(any)
 }
 variable "key_name" {
-description = "Llave publica"
+  description = "Llave publica"
 
 }
-variable "public_key"{
-description = "Public key path"
-
-}
-variable "sg_name" {
-description = "Grupo de sguridad"
-
-}
-variable "ingress_rules" {
-description = "Ingress"
+variable "public_key" {
+  description = "Public key path"
 
 }
 variable "instance_count" {
-description = "Cantidad de intancias"
+  description = "Cantidad de intancias"
 
 }
-variable "egress_rules" {
-description = "Egress"
 
+variable "vpc_security_group_ids" {
+  description = "A list of security group IDs to associate with."
+  type        = list(string)
+  default     = []
 }
