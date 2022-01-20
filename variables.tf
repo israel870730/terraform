@@ -38,6 +38,12 @@ variable "tags_s3" {
   description = "Tags del Bucket"
 }
 
-#variable "this_security_group_id" {
-#  description = "this_security_group_id"
-#}
+variable "description" {
+  description = "description"
+}
+
+variable "tags_sg" {
+  type        = map(string)
+  description = "tags_sg"
+  default     = {}
+}

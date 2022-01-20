@@ -16,3 +16,6 @@ variable "tags" {
   default     = {}
 }
 
+variable "description" {
+  description = "description of SG"
+}
