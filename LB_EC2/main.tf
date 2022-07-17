@@ -1,12 +1,18 @@
+###########################
+#  Definir el provider   ##
+###########################
+
 provider "aws" {
+  //region = "us-east-1"
+  region = local.region
+}
+
+locals {
   region = "us-east-1"
+  ami    = var.ubuntu_ami[local.region]
 }
 
-variable "public_key" {
-  description = "Public key path"
-  default     = "~/.ssh/id_rsa.pub"
-}
-
+#Definimos la Key Pair que va a usar nuestras instancias EC2
 resource "aws_key_pair" "terraform_demo" {
   key_name   = "terraform_demo"
   public_key = "${file(var.public_key)}"
@@ -19,18 +25,21 @@ defined by another separate Terraform configuration, or modified by functions. *
 /*En este caso vamos a obtener informacion de las subredes en AWS que no fueron 
 creadas por terraform pero que usando "data source" podermos acceder a ella*/
 data "aws_subnet" "az_a" {
-  availability_zone = "us-east-1a"
+  //availability_zone = "us-east-1a"
+  availability_zone = "${local.region}a"
   default_for_az    = true
 }
 
 data "aws_subnet" "az_b" {
-  availability_zone = "us-east-1b"
+  //availability_zone = "us-east-1b"
+  availability_zone = "${local.region}b"
   default_for_az    = true
 }
 
+#Instancia #1
 resource "aws_instance" "mi_servidor_1" {
-  ami           = "ami-052efd3df9dad4825"
-  instance_type = "t2.micro"
+  ami           = local.ami
+  instance_type = var.tipo_instancia
 
   #Para acceder al valor del data source creado anteriormente
   # data."tipo"."nombre"."argumento"
@@ -60,9 +69,10 @@ resource "aws_instance" "mi_servidor_1" {
   }
 }
 
+#Instancia #2
 resource "aws_instance" "mi_servidor_2" {
-  ami                    = "ami-052efd3df9dad4825"
-  instance_type          = "t2.micro"
+  ami                    = local.ami
+  instance_type          = var.tipo_instancia
   subnet_id              = data.aws_subnet.az_b.id
   #Las referencias a los atributos de otros recursos son de la forma:
   #tipo_del_recurso.nombre_del_recurso.atributo
@@ -88,6 +98,7 @@ resource "aws_instance" "mi_servidor_2" {
   }
 }
 
+#Grupo de Seguridad para las instancias
 resource "aws_security_group" "mi_sg" {
   name          = "primer-servidor-sg"
 
@@ -96,15 +107,15 @@ resource "aws_security_group" "mi_sg" {
     #Aqui solo permito que accedan a las intancias desde el ALB
     security_groups = [aws_security_group.alb.id]
     description = "Acceso al puerto 80 desde el exterior"
-    from_port   = 80
-    to_port     = 80
+    from_port   = var.puerto_servidor
+    to_port     = var.puerto_servidor
     protocol    = "TCP"
   }
   ingress {
     cidr_blocks = ["0.0.0.0/0"]
     description = "Acceso al puerto 22 desde el exterior"
-    from_port   = 22
-    to_port     = 22
+    from_port   = var.puerto_ssh
+    to_port     = var.puerto_ssh
     protocol    = "TCP"
   }
   egress {
@@ -116,7 +127,9 @@ resource "aws_security_group" "mi_sg" {
   }
 }
 
-#Creamos el ALB
+##################
+#Creamos el ALB ##
+##################
 resource "aws_lb" "alb" {
   load_balancer_type        = "application"
   name                      = "terraform-alb"
@@ -131,8 +144,8 @@ resource "aws_security_group" "alb" {
    ingress {
     cidr_blocks = ["0.0.0.0/0"]
     description = "Acceso al puerto 80 desde el exterior"
-    from_port   = 80
-    to_port     = 80
+    from_port   = var.puerto_lb
+    to_port     = var.puerto_lb
     protocol    = "TCP"
    }
    egress {
@@ -160,7 +173,7 @@ resource "aws_lb_target_group" "this" {
     enabled   = true
     matcher  = "200"
     path     = "/" 
-    port     = "80"
+    port     = var.puerto_servidor
     protocol = "HTTP"
   }
 }
@@ -169,20 +182,20 @@ resource "aws_lb_target_group" "this" {
 resource "aws_lb_target_group_attachment" "servidor_1" {
   target_group_arn = aws_lb_target_group.this.arn
   target_id        = aws_instance.mi_servidor_1.id
-  port             = 80
+  port             = var.puerto_servidor
 }
 
 #Adjuntamos el servidor #2 al targuet group que pertenece al ALB
 resource "aws_lb_target_group_attachment" "servidor_2" {
   target_group_arn = aws_lb_target_group.this.arn
   target_id        = aws_instance.mi_servidor_2.id
-  port             = 80
+  port             = var.puerto_servidor
 }
 
 #Creamos el listener para el TG
 resource "aws_lb_listener" "this" {
   load_balancer_arn = aws_lb.alb.arn
-  port              = 80
+  port              = var.puerto_lb
   protocol          = "HTTP"
 
   default_action {
