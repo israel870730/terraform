@@ -27,3 +27,34 @@ variable "private_subnet_suffix" {
   type        = string
   default     = "Subnet Private"
 }
+
+
+
+
+
+
+
+variable "azs" {
+  description = "A list of availability zones names or ids in the region"
+  type        = list(string)
+  default     = ["a","b"]
+}
+
+
+
+
+
+#Variable con los bloques de ip de las subnet y las Az donde quiero que se creen
+variable "public_subnets-1" {
+  description = "Mapa de subent con nombres y Az"
+
+  type = map(object({
+    cidr_block = string,
+    az         = string,
+  }))
+
+  default = {
+    "public-1" = { az = "a", cidr_block = "10.0.1.0/24" }    
+    "public-2" = { az = "b", cidr_block = "10.0.2.0/24" }
+  }
+}

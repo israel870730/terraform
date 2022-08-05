@@ -24,12 +24,11 @@ locals {
 # Create the VPC
 #----------------
  resource "aws_vpc" "Main" {                # Creating VPC here
-   cidr_block            = var.main_vpc_cidr     # Defining the CIDR block use 10.0.0.0/24 for demo
-   instance_tenancy      = "default"
-    enable_dns_support   = "true" #gives you an internal domain name
+   cidr_block       = var.main_vpc_cidr     # Defining the CIDR block use 10.0.0.0/24 for demo
+   instance_tenancy = "default"
+    enable_dns_support = "true" #gives you an internal domain name
     enable_dns_hostnames = "true" #gives you an internal host name
-    enable_classiclink   = "false"
-
+    enable_classiclink = "false"
    tags = {
     "Name" = "VPC Main"
     "From" = "Terraform"
@@ -52,12 +51,10 @@ locals {
  #-------------------------
  resource "aws_subnet" "publicsubnets" {    # Creating Public Subnets
    vpc_id =  aws_vpc.Main.id
-   count  = length(var.public_subnets)
-
-   cidr_block              = "${var.public_subnets[count.index]}"        # CIDR block of public subnets
+   count = length(var.public_subnets)
+   cidr_block = "${var.public_subnets[count.index]}"        # CIDR block of public subnets
    map_public_ip_on_launch = "true" //it makes this a public subnet
-   availability_zone       = "us-east-1a"
-
+   availability_zone = "us-east-1a"
    tags = {
     "Name" = var.public_subnet_suffix
     "CIDR" = var.public_subnets[count.index]
@@ -70,11 +67,9 @@ locals {
  #--------------------------
  resource "aws_subnet" "privatesubnets" {
    vpc_id =  aws_vpc.Main.id
-   count  = length(var.private_subnets)
-
-   cidr_block        = "${var.private_subnets[count.index]}"          # CIDR block of private subnets
+   count = length(var.private_subnets)
+   cidr_block = "${var.private_subnets[count.index]}"          # CIDR block of private subnets
    availability_zone = "us-east-1b"
-
    tags = {
     "Name" = var.private_subnet_suffix
     "CIDR" = var.private_subnets[count.index]
@@ -87,12 +82,10 @@ locals {
  #---------------------------------
  resource "aws_route_table" "PublicRT" {    # Creating RT for Public Subnet
     vpc_id =  aws_vpc.Main.id
-
-    route {
+         route {
     cidr_block = "0.0.0.0/0"               # Traffic from Public Subnet reaches Internet via Internet Gateway
     gateway_id = aws_internet_gateway.IGW.id
      }
-
     tags = {
         "Name" = "RT subnet public"
         "From" = "Terraform"
@@ -104,12 +97,10 @@ locals {
  #----------------------------------
  resource "aws_route_table" "PrivateRT" {    # Creating RT for Private Subnet
    vpc_id = aws_vpc.Main.id
-
    route {
    cidr_block = "0.0.0.0/0"             # Traffic from Private Subnet reaches Internet via NAT Gateway
    nat_gateway_id = aws_nat_gateway.NATgw.id
    }
-
    tags = {
         "Name" = "RT subnet private"
         "From" = "Terraform"
@@ -121,8 +112,7 @@ locals {
  #---------------------------------------------
  resource "aws_route_table_association" "PublicRTassociation" {
     count = length(var.public_subnets)
-
-    subnet_id      = aws_subnet.publicsubnets[count.index].id
+    subnet_id = aws_subnet.publicsubnets[count.index].id
     route_table_id = aws_route_table.PublicRT.id
  }
 
@@ -131,14 +121,11 @@ locals {
  #----------------------------------------------
  resource "aws_route_table_association" "PrivateRTassociation" {
     count = length(var.public_subnets)
-
-    subnet_id      = aws_subnet.privatesubnets[count.index].id
+    subnet_id = aws_subnet.privatesubnets[count.index].id
     route_table_id = aws_route_table.PrivateRT.id
  }
-
  resource "aws_eip" "nateIP" {
    vpc   = true
-
    tags = {
         "Name" = "IP for NAT VPC Main"
         "From" = "Terraform"
@@ -150,8 +137,7 @@ locals {
  #-----------------------------------------------------------
  resource "aws_nat_gateway" "NATgw" {
    allocation_id = aws_eip.nateIP.id
-   subnet_id     = aws_subnet.publicsubnets[1].id
-   
+   subnet_id = aws_subnet.publicsubnets[1].id
    tags = {
         "Name" = "NAT Gateway for subnet private on VPC Main"
         "From" = "Terraform"

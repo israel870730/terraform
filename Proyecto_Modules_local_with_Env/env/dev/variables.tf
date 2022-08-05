@@ -10,29 +10,6 @@ variable "puerto_servidor" {
   }
 }
 
-variable "puerto_lb" {
-  description = "Puerto para el LB"
-  type        = number
-  default     = 80
-}
-
-variable "puerto_ssh" {
-  description = "Puerto SSh para acceder a la instancias"
-  type        = number
-  default     = 22
-}
-
-variable "tipo_instancia" {
-  description = "Tipo de instancia EC2"
-  type        = string
-  default     = "t2.nano"
-}
-
-variable "public_key" {
-  description = "Public key path"
-  default     = "~/.ssh/id_rsa.pub"
-}
-
 #Variables en forma de mapas
 variable "ubuntu_ami" {
     description = "AMI por region"
@@ -54,12 +31,13 @@ variable "servidores" {
   }))
 
   default = {
-    #Se puede definir el mapa asi
-    "serv-1" = {
-      az = "a"
-      nombre = "servidor-1"
-    }
-    #Otra forma de definir el mapa
+    "serv-1" = { az = "a", nombre = "servidor-1" }
     "serv-2" = { az = "b", nombre = "servidor-2" }
   }
+}
+
+variable "tipo_instancia" {
+  description = "Tipo de instancia"
+  type = string
+  default = "t2.nano"
 }

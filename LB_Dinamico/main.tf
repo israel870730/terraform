@@ -41,6 +41,7 @@ data "aws_subnet" "public_subnet" {
 #-------------------------------------------
 resource "aws_instance" "servidor" {
   for_each      = var.servidores
+  
   ami           = local.ami
   instance_type = var.tipo_instancia
   //Para obtener el valor en un mapa de "data source" [each.key]
@@ -157,6 +158,7 @@ resource "aws_lb_target_group" "this" {
 #------------------------------- 
 resource "aws_lb_target_group_attachment" "servidor" {
   for_each = var.servidores
+  
   target_group_arn = aws_lb_target_group.this.arn
   //Para acceder al id de cada instancias que esta en el mapa de instancias 
   target_id        = aws_instance.servidor[each.key].id
@@ -164,7 +166,7 @@ resource "aws_lb_target_group_attachment" "servidor" {
 }
 
 #------------------------------
-#Creamos el listener para el TG
+#Creamos el listener para el LB
 #------------------------------
 resource "aws_lb_listener" "this" {
   load_balancer_arn = aws_lb.alb.arn
