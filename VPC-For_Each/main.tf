@@ -9,7 +9,7 @@
 # 9- Creating the NAT Gateway using subnet_id and allocation_id
 
 #------------------------------------------------------
-# Ejemplo hecho para usar el bucle "count"
+# Ejemplo hecho para usar el bucle "for_each"
 #------------------------------------------------------
 
 provider "aws" {
@@ -50,14 +50,18 @@ locals {
  # Create a Public Subnets
  #-------------------------
  resource "aws_subnet" "publicsubnets" {    # Creating Public Subnets
-   vpc_id =  aws_vpc.Main.id
-   count = length(var.public_subnets)
-   cidr_block = "${var.public_subnets[count.index]}"        # CIDR block of public subnets
+   vpc_id                  = aws_vpc.Main.id
+   for_each                = var.public_subnets
+
+   cidr_block              = each.value.cidr_subnet_public        # CIDR block of public subnets
+   #availability_zone       = each.value.az
+   availability_zone       = "${local.region}${each.value.az}"
+
+
    map_public_ip_on_launch = "true" //it makes this a public subnet
-   availability_zone = "us-east-1a"
    tags = {
     "Name" = var.public_subnet_suffix
-    "CIDR" = var.public_subnets[count.index]
+    "CIDR" = each.value.cidr_subnet_public
     "From" = "Terraform"
   }
  }
@@ -66,13 +70,16 @@ locals {
  # Creating Private Subnets
  #--------------------------
  resource "aws_subnet" "privatesubnets" {
-   vpc_id =  aws_vpc.Main.id
-   count = length(var.private_subnets)
-   cidr_block = "${var.private_subnets[count.index]}"          # CIDR block of private subnets
-   availability_zone = "us-east-1b"
+   vpc_id            =  aws_vpc.Main.id
+   for_each          = var.private_subnets
+
+   cidr_block        = each.value.cidr_subnet_private
+   #availability_zone = each.value.az
+   availability_zone       = "${local.region}${each.value.az}"
+
    tags = {
     "Name" = var.private_subnet_suffix
-    "CIDR" = var.private_subnets[count.index]
+    "CIDR" = each.value.cidr_subnet_private
     "From" = "Terraform"
   }
  }
@@ -111,8 +118,11 @@ locals {
  # Route table Association with Public Subnet's
  #---------------------------------------------
  resource "aws_route_table_association" "PublicRTassociation" {
-    count = length(var.public_subnets)
-    subnet_id = aws_subnet.publicsubnets[count.index].id
+    //count = length(var.public_subnets)
+    //subnet_id = aws_subnet.publicsubnets[count.index].id
+
+    for_each                = var.public_subnets
+    subnet_id = aws_subnet.publicsubnets[each.key].id
     route_table_id = aws_route_table.PublicRT.id
  }
 
@@ -120,10 +130,17 @@ locals {
  # Route table Association with Private Subnet's
  #----------------------------------------------
  resource "aws_route_table_association" "PrivateRTassociation" {
-    count = length(var.public_subnets)
-    subnet_id = aws_subnet.privatesubnets[count.index].id
+    //count = length(var.public_subnets)
+    //subnet_id = aws_subnet.privatesubnets[count.index].id
+
+    for_each                = var.private_subnets
+    subnet_id = aws_subnet.privatesubnets[each.key].id
     route_table_id = aws_route_table.PrivateRT.id
  }
+
+#--------------------------
+# IP fot the NAT VPC MAIN
+#--------------------------
  resource "aws_eip" "nateIP" {
    vpc   = true
    tags = {
@@ -137,7 +154,11 @@ locals {
  #-----------------------------------------------------------
  resource "aws_nat_gateway" "NATgw" {
    allocation_id = aws_eip.nateIP.id
-   subnet_id = aws_subnet.publicsubnets[1].id
+   
+   //subnet_id = {for k, v in aws_subnet.publicsubnets : k => v.id}
+
+   //subnet_id = aws_subnet.publicsubnets.[each.value].id
+   subnet_id = aws_subnet.publicsubnets["public-1"].id
    tags = {
         "Name" = "NAT Gateway for subnet private on VPC Main"
         "From" = "Terraform"
