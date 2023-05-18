@@ -1,0 +1,14 @@
+https://www.youtube.com/watch?v=ezX4D1ZK5mA&list=LL&index=7
+Descargar el fichero values.yaml
+https://github.com/kubernetes/ingress-nginx/tree/master/charts/ingress-nginx
+
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+helm install sample-ingress ingress-nginx/ingress-nginx -f values.yaml --set controller.admissionWebhooks.enabled=false
+
+
+https://docs.nginx.com/nginx-ingress-controller/installation/installation-with-helm/
+
+helm install my-release ingress-nginx/ingress-nginx
+--set controller.service.type=NodePort
+--set controller.admissionWebhooks.enabled=false
+validate.nginx.ingress.kubernetes.io

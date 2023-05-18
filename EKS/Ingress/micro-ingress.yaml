@@ -1,0 +1,29 @@
+apiVersion: networking.k8s.io/v1 
+kind: Ingress 
+metadata:
+  name: micro-ingress
+  namespace: default
+  annotations: 
+    kubernetes.io/ingress.class: nginx 
+spec:
+  rules:
+    - host: apache.verifone.cloud
+      http:
+        paths:
+        - backend:
+            service:
+              name: hostname-svc
+              port:
+                number: 80
+          path: /
+          pathType: Prefix
+    - host: test.verifone.cloud
+      http:
+        paths:
+        - backend:
+            service:
+              name: apache-svc
+              port:
+                number: 80
+          path: /
+          pathType: Prefix
