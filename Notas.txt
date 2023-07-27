@@ -59,7 +59,3 @@ export AWS_SESSION_TOKEN=$(echo $credentials | jq -r ".SessionToken")
 aws eks --region eu-west-2 update-kubeconfig --name devops-cluster-eu-west-2
 
 3. You can run kubectl commands from /home/vcs_cloudops location
-
-
-accessKey: AKIAQKZWTS7WNUCREFPN
-secretKey: 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
