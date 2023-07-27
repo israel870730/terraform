@@ -1,0 +1,168 @@
+About Container Storage Interface (CSI)
+
+The Container Storage Interface (https://github.com/container-storage-interface/spec/blob/master/spec.md) (CSI) is a standard for exposing arbitrary block and file storage systems to containerized workloads on Container Orchestration Systems (COs) like Kubernetes.
+
+Using CSI third-party storage providers can write and deploy plugins exposing new storage systems in Kubernetes without ever having to touch the core Kubernetes code.
+
+About the Amazon EBS CSI Driver
+The Amazon Elastic Block Store (Amazon EBS) Container Storage Interface (CSI) driver (https://github.com/kubernetes-sigs/aws-ebs-csi-driver) provides a CSI interface that allows Amazon Elastic Kubernetes Service (Amazon EKS) clusters to manage the lifecycle of Amazon EBS volumes for persistent volumes.
+
+This topic shows you how to deploy the Amazon EBS CSI Driver to your Amazon EKS cluster and verify that it works.
+
+To improve security and reduce the amount of work, you can manage the Amazon EBS CSI driver as an Amazon EKS add-on.
+
+What are Amazon EKS add-ons? (Click to expand)
+Amazon EKS add-ons provide installation and management of a curated set of add-ons for Amazon EKS clusters. 
+All Amazon EKS add-ons include the latest security patches, bug fixes, and are validated by AWS to work with Amazon EKS. 
+Amazon EKS add-ons allow you to consistently ensure that your Amazon EKS clusters are secure and stable and reduce the amount of work that you need to do in order to install, 
+configure, and update add-ons. To know more about EKS add ons, please check eks-add-on documentation (https://docs.aws.amazon.com/eks/latest/userguide/eks-add-ons.html).
+
+You can view the list of add-ons available for a cluster version using the below command.
+eksctl utils describe-addon-versions --kubernetes-version 1.24 | grep AddonName
+
+Output :
+
+"AddonName": "aws-ebs-csi-driver",
+"AddonName": "vpc-cni",
+"AddonName": "adot",
+"AddonName": "coredns",
+"AddonName": "kube-proxy",
+"AddonName": "kubecost_kubecost",
+"AddonName": "dynatrace_dynatrace-operator",
+"AddonName": "teleport_teleport",
+"AddonName": "tetrate-io_istio-distro",
+"AddonName": "datree_engine-pro",
+From the above, we'll be creating the aws-ebs-csi-driver addon for this chapter.
+
+Create OpenID Connect (OIDC) Provider
+As a prerequisite to install the EBS CSI driver as EKS add on, we need to create an AWS Identity and Access Management(IAM) OIDC provider for the EKS cluster. Use the following command to create an IAM OIDC provider.
+
+export CLUSTER="eksworkshop-eksctl"
+
+eksctl utils associate-iam-oidc-provider \
+  --region=$AWS_REGION \
+  --cluster=$CLUSTER \
+  --approve
+
+You should see the following output in the terminal
+    2023-03-15 22:04:01 [ℹ]  will create IAM Open ID Connect provider for cluster "eksworkshop-eksctl" in "us-east-1"
+    2023-03-15 22:04:01 [✔]  created IAM Open ID Connect provider for cluster "eksworkshop-eksctl" in "us-east-1"
+
+Configure IAM Role for Service Account
+You can associate an IAM role with a Kubernetes service account. This service account can then provide AWS permissions to the containers in any pod that uses that service account. 
+With this feature, you no longer need to provide extended permissions to the Amazon EKS node IAM role so that pods on that node can call AWS APIs.
+
+EBS CSI driver add on utilizes the IAM roles for service accounts capability of Amazon EKS. One must create an IAM policy (https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_create.html) 
+with the permissions in the example policy (https://github.com/kubernetes-sigs/aws-ebs-csi-driver/blob/master/docs/example-iam-policy.json) from GitHub. 
+You can create an IAM role, attach one of the policies to it, and annotate the Kubernetes service account used by the add-on with the following command.
+
+We'll ask eksctl to create an IAM Role that contains an IAM Policy, and associate it with a Kubernetes Service Account called ebs-csi-controller-sa that will be used by the CSI Driver:
+
+# Create a service account
+eksctl create iamserviceaccount \
+  --name ebs-csi-controller-sa \
+  --namespace kube-system \
+  --cluster $CLUSTER \
+  --attach-policy-arn arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy \
+  --approve \
+  --role-only \
+  --role-name AmazonEKS_EBS_CSI_DriverRole
+
+You should see the following output in the terminal
+
+2023-03-15 22:13:50 [ℹ]  1 iamserviceaccount (kube-system/ebs-csi-controller-sa) was included (based on the include/exclude rules)
+2023-03-15 22:13:50 [!]  serviceaccounts that exist in Kubernetes will be excluded, use --override-existing-serviceaccounts to override
+2023-03-15 22:13:50 [ℹ]  1 task: { create IAM role for serviceaccount "kube-system/ebs-csi-controller-sa" }
+2023-03-15 22:13:50 [ℹ]  building iamserviceaccount stack "eksctl-eksworkshop-eksctl-addon-iamserviceaccount-kube-system-ebs-csi-controller-sa"
+2023-03-15 22:13:51 [ℹ]  deploying stack "eksctl-eksworkshop-eksctl-addon-iamserviceaccount-kube-system-ebs-csi-controller-sa"
+Once the cloudformation stack finishes executing, next step is to create the add on.
+
+Add EBS CSI add-on
+To add the Amazon EBS CSI add-on using eksctl, run the following command. Before running the command, we need to replace "ACCOUNT_ID" with your AWS Account ID. There's an environment variable ACCOUNT_ID that's already set as part of the workshop environment set up. We'd just need to use that in the command below.
+
+eksctl create addon --name aws-ebs-csi-driver --cluster $CLUSTER \
+    --service-account-role-arn arn:aws:iam::$ACCOUNT_ID:role/AmazonEKS_EBS_CSI_DriverRole --force
+Output
+
+023-03-15 22:27:56 [ℹ]  Kubernetes version "1.24" in use by cluster "eksworkshop-eksctl"
+2023-03-15 22:27:56 [ℹ]  creating role using recommended policies
+2023-03-15 22:27:57 [ℹ]  deploying stack "eksctl-eksworkshop-eksctl-addon-aws-ebs-csi-driver"
+2023-03-15 22:27:57 [ℹ]  waiting for CloudFormation stack "eksctl-eksworkshop-eksctl-addon-aws-ebs-csi-driver"
+2023-03-15 22:28:27 [ℹ]  waiting for CloudFormation stack "eksctl-eksworkshop-eksctl-addon-aws-ebs-csi-driver"
+2023-03-15 22:29:27 [ℹ]  waiting for CloudFormation stack "eksctl-eksworkshop-eksctl-addon-aws-ebs-csi-driver"
+2023-03-15 22:29:27 [ℹ]  creating addon
+
+To check the add on version that we just installed, run the following command
+eksctl get addon --name aws-ebs-csi-driver --cluster $CLUSTER
+
+Output
+
+2023-03-15 22:33:19 [ℹ]  Kubernetes version "1.24" in use by cluster "eksworkshop-eksctl"
+2023-03-15 22:33:20 [ℹ]  to see issues for an addon run `eksctl get addon --name <addon-name> --cluster <cluster-name>`
+
+NAME                    VERSION                 STATUS  ISSUES  IAMROLE                                                         UPDATE AVAILABLE        CONFIGURATION VALUES
+aws-ebs-csi-driver      v1.17.0-eksbuild.1      ACTIVE  0       arn:aws:iam::<ACCTOUNT_ID>:role/AmazonEKS_EBS_CSI_DriverRole
+
+Define Storage Class
+Dynamic Volume Provisioning (https://kubernetes.io/docs/concepts/storage/dynamic-provisioning/) allows storage volumes to be created on-demand.
+
+StorageClass (https://kubernetes.io/docs/concepts/storage/storage-classes/) should be pre-created to define which provisioner should be used and what parameters should be passed when dynamic provisioning is invoked.
+
+We need to have a dynamic PersistentVolume provisioner with this StorageClass to satisfy the PersistentVolumeClaims used in the statefulset in next chapter.
+
+Copy/Paste the following commands into your Cloud9 Terminal.
+
+mkdir ${HOME}/environment/ebs_statefulset
+cat << EoF > ${HOME}/environment/ebs_statefulset/mysql-storageclass.yaml
+kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+  name: mysql-gp2
+provisioner: ebs.csi.aws.com # Amazon EBS CSI driver
+parameters:
+  type: gp2
+  encrypted: 'true' # EBS volumes will always be encrypted by default
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete
+mountOptions:
+- debug
+EoF
+
+You can see that:
+    The provisioner is ebs.csi.aws.com.
+    The volume type is General Purpose SSD volumes (gp2) (https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ebs-volume-types.html#EBSVolumeTypes_gp2) .
+    The encrypted parameter will ensure the EBS volumes are encrypted by default.
+
+Create storageclass mysql-gp2 by following command.
+kubectl create -f ${HOME}/environment/ebs_statefulset/mysql-storageclass.yaml
+
+Output:
+storageclass.storage.k8s.io/mysql-gp2 created
+
+You can verify the StorageClass and its options with this command.
+kubectl describe storageclass mysql-gp2
+
+Name:                  mysql-gp2
+IsDefaultClass:        No
+Annotations:           <none>
+Provisioner:           ebs.csi.aws.com
+Parameters:            encrypted=true,type=gp2
+AllowVolumeExpansion:  <unset>
+MountOptions:
+  debug
+ReclaimPolicy:      Delete
+VolumeBindingMode:  WaitForFirstConsumer
+Events:             <none>
+
+We will use this mysql-gp2 storageClassName in volumeClaimTemplates of the deployment specification in “Create StatefulSet” chapter later.
+
+volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: mysql-gp2
+      resources:
+        requests:
+          storage: 10Gi
+          

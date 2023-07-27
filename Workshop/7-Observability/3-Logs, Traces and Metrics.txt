@@ -1,0 +1,60 @@
+In the previous chapter, you completed the basic setup for Observability in EKS, Now lets move to the fun part of seeing the logs, metrics and traces for our services in product catalog application.
+
+Access the application
+We need to access the application so that you can get the data for logs, metrics and traces. Get the Loadbalancer url
+
+
+export LB_NAME=$(kubectl get svc frontend -n workshop -o jsonpath="{.status.loadBalancer.ingress[*].hostname}") 
+echo $LB_NAME
+
+Open the Application using the above Loadbalancer url, you should see the below screen. Refresh this application multiple times or add new products.
+
+Cloudwatch Container Insights
+Log into console, navigate to Cloudwatch -> Insights -> Container Insights -> Performance monitoring, you can see the EKS Cluster insight
+
+You can change the dropdown to EKS Nodes to see the Nodes insight
+
+Cloudwatch Logs
+Log into console, navigate to Cloudwatch -> Logs -> LogGroups, you should see below log groups
+
+Catalog Detail Container Logs
+Click on the application LogGroup, and click on Search All
+
+Now, Type Catalog Detail in the Search box and select 30m and Click enter, you should see the below logs from proddetail backend service
+
+Product Catalog Container Logs
+Click on the application LogGroup, and click on Search All
+
+Now, type Get Request succeeded in the search box and enter, you should see below logs
+
+(Optional) Control Plane Logging
+Log into console, navigate to Cloudwatch -> Logs -> LogGroups, you should see log group /aws/eks/eksworkshop-eksctl/cluster for Control Plane as below
+
+Prometheus Metrics
+Prometheus Logs
+Log events from Amazon EKS and Kubernetes clusters are stored in the /aws/containerinsights/cluster_name/prometheus LogGroup in Amazon CloudWatch Logs.
+
+Log into console, navigate to Cloudwatch -> LogGroups, you should see /aws/containerinsights/eksworkshop-eksctl/prometheus LogGroup, select this and you should be able to see the metrics for all the containers logged here.
+
+Prometheus Metrics
+Log into console, navigate to Cloudwatch -> Metrics -> ContainerInsights/Prometheus -> "ClusterName, Namespace" , you should see the below metrics for the namespace workshop.
+
+Select any of the metrics (as in below example process_cpu_seconds_total) to add to the graph. You may find different graph depending on how much you accessed the Product Catalog Application in last 3 hours.
+
+XRay
+Ensure that you follow access the application step before you look for traces otherwise you wont find any traces.
+
+Service Map
+Log into console, navigate to Cloudwatch -> X-Ray traces -> Service map, you should see the below in the Service Map. AWS X-Ray service maps show information about call from the client to its downstream services.
+
+If you dont see anything, that means you must have not accessed the application. Follow access the application and add some products, so that you can get some data from the services used in product catalog application into the Xray.
+
+The service graph arrows show the request workflow, which helps to understand the relationships between services.
+
+Below graph shows the traces when we access the Product Catalog application from the Load Balancer endpoint
+
+First, the client connects to frontend via Load Balancer and then frontend makes a call to prodcatalog to get products information and then it calls the proddetail to get the details about the catalog.
+
+Trace Details
+Now Click on "Traces" under "X-Ray traces" and filter traces by running query edge("Frontend", "Product-Catalog"). Traces are listed and you should be able to click on the trace ID and see the complete end to end trace with latency and other information.
+

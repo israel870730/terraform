@@ -1,0 +1,100 @@
+Pre-requisite
+Make sure you have completed the chapter Using Helm to ensure you have deployed the Product Catalog Application.
+
+Configure a Network Provider with Network Policy support.
+In order to have Network Policies properly configured and working as expected, other than a Kubernetes cluster, you need to configure a network provider with network policy support. According to Kubernetes Documentation, there are a number of network providers that support NetworkPolicy, including:
+
+Antrea
+Calico
+Cilium
+Kube-router
+Romana
+Weave Net
+In these example we will be configuring the Calico network policy engine add-on on our Amazon EKS cluster. With Calico network policy enforcement, you can implement network segmentation and tenant isolation.
+
+Install Calico with Helm
+Add Project Calico into your Helm repository, or update your Helm repositories
+
+helm repo add projectcalico https://docs.projectcalico.org/charts
+helm repo update
+
+Install version 3.21.4 or later of the Tigera Calico operator and custom resource definitions.
+
+helm install calico projectcalico/tigera-operator --version v3.21.4
+
+Verify the newly created resources in the tigera-operator and calico-system namespaces.
+kubectl get all -n tigera-operator
+Example output:
+NAME                                   READY   STATUS    RESTARTS   AGE
+pod/tigera-operator-768d489967-ncfnp   1/1     Running   0          21m
+
+NAME                              READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/tigera-operator   1/1     1            1           21m
+
+NAME                                         DESIRED   CURRENT   READY   AGE
+replicaset.apps/tigera-operator-768d489967   1         1         1       21m
+
+kubectl get all -n calico-system
+
+Example output:
+NAME                                           READY   STATUS    RESTARTS   AGE
+pod/calico-kube-controllers-7c5bd77b47-rg4kx   1/1     Running   0          11m
+pod/calico-node-22tf9                          1/1     Running   0          22m
+pod/calico-node-854ms                          1/1     Running   0          22m
+pod/calico-node-ptpj4                          1/1     Running   0          22m
+pod/calico-typha-7f8f4cc954-2nhss              1/1     Running   0          22m
+pod/calico-typha-7f8f4cc954-fdxjj              1/1     Running   0          22m
+
+NAME                                      TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)    AGE
+service/calico-kube-controllers-metrics   ClusterIP   172.20.93.236   <none>        9094/TCP   22m
+service/calico-typha                      ClusterIP   172.20.47.56    <none>        5473/TCP   22m
+
+NAME                                    DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR              AGE
+daemonset.apps/calico-node              3         3         3       3            3           kubernetes.io/os=linux     22m
+daemonset.apps/calico-windows-upgrade   0         0         0       0            0           kubernetes.io/os=windows   22m
+
+NAME                                      READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/calico-kube-controllers   1/1     1            1           22m
+deployment.apps/calico-typha              2/2     2            2           22m
+
+NAME                                                 DESIRED   CURRENT   READY   AGE
+replicaset.apps/calico-kube-controllers-7c5bd77b47   1         1         1       22m
+replicaset.apps/calico-kube-controllers-8dfd45bf8    0         0         0       13m
+replicaset.apps/calico-typha-7f8f4cc954              2         2         2       22m
+
+If you're using version 1.9.3 or later of the Amazon VPC CNI plugin for Kubernetes, you'll need to enable the plugin to add the Pod IP address to an annotation in the calico-kube-controller deployment.
+
+To validate your Amazon VPC CNI plugin version, run the following command:
+
+kubectl describe daemonset aws-node -n kube-system | grep amazon-k8s-cni: | cut -d ":" -f 3
+Example output:
+v1.12.1-eksbuild.1
+
+Apply the permission that grants the aws-node Kubernetes clusterrole the permission to patch pods to your cluster.
+
+cat <<EOF | kubectl apply -f -
+$(kubectl get clusterrole aws-node -o yaml)                                                                                                                                                        
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - patch
+EOF
+
+Set the environment variable to enable the plugin annotation.
+kubectl set env daemonset aws-node -n kube-system ANNOTATE_POD_IP=true
+
+Rollout the aws-node daemonset.
+
+kubectl -n kube-system rollout restart daemonset/aws-node
+kubectl -n kube-system rollout status daemonset/aws-node
+
+Also rollout the calico-kube-controllers deployment.
+
+kubectl -n calico-system rollout restart deployment/calico-kube-controllers
+kubectl -n calico-system rollout status deployment/calico-kube-controllers
+
+Confirm that the annotation was added to the calico-kube-controllers Pods.
+
+kubectl describe $(kubectl -n calico-system get pods -o name | grep controllers) -n calico-system | grep vpc.amazonaws.com/pod-ips

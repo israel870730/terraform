@@ -1,0 +1,162 @@
+Test Healthcheck
+Pre-requisite
+Make sure you have completed the chapter Using Helm to ensure you have deployed the Product Catalog Application.
+
+Liveness Probes
+Below is the Liveness Probes that we have used in proddetail service deployment. In this, the livenessProbe field determines how kubelet should check the container in order to consider whether it is healthy or not. 
+kubelet uses the periodSeconds field to do frequent check on the Container. In this case, kubelet checks the liveness probe every 5 seconds. 
+The initialDelaySeconds field is used to tell kubelet that it should wait for 5 seconds before doing the first probe. 
+To perform a probe, kubelet sends a HTTP GET request to the server hosting this pod and if the handler for the servers /ping returns a success code, then the container is considered healthy. 
+If the handler returns a failure code, the kubelet kills the container and restarts it.
+
+    .....
+    .....
+    spec:
+      containers:
+        - name: proddetail
+          .......
+          .......
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 1
+            successThreshold: 1
+            failureThreshold: 3
+    .....
+    .....
+
+Let us also confirm that all the replicas are available to serve traffic when a service is pointed to this deployment.
+kubectl get pod -n workshop -l app=proddetail
+
+It should show below output:
+
+NAME                          READY   STATUS    RESTARTS   AGE
+proddetail-7b78f4b59f-xxxx   1/1     Running   0          2d3h
+
+Introduce a Failure
+export BE_POD_NAME=$(kubectl get pods -n workshop -l app=proddetail -o jsonpath='{.items[].metadata.name}') 
+kubectl exec -it  $BE_POD_NAME -n workshop -c proddetail -- bash
+
+Then execute the command curl http://proddetail.workshop.svc.cluster.local:3000/injectFault on the container bash terminal to call injectFault and you should see below
+
+root@proddetail-7b78f4b59f-kmxjq:/usr/src/app# curl http://proddetail.workshop.svc.cluster.local:3000/injectFault
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>Error: host: proddetail-7b78f4b59f-kmxjq will now respond with 500 error.<br> &nbsp; &nbsp;at /usr/src/app/app.js:44:10<br> &nbsp; &nbsp;at Layer.handle [as handle_request] (/usr/src/app/node_modules/express/lib/router/layer.js:95:5)<br> &nbsp; &nbsp;at next (/usr/src/app/node_modules/express/lib/router/route.js:137:13)<br> &nbsp; &nbsp;at Route.dispatch (/usr/src/app/node_modules/express/lib/router/route.js:112:3)<br> &nbsp; &nbsp;at Layer.handle [as handle_request] (/usr/src/app/node_modules/express/lib/router/layer.js:95:5)<br> &nbsp; &nbsp;at /usr/src/app/node_modules/express/lib/router/index.js:281:22<br> &nbsp; &nbsp;at Function.process_params (/usr/src/app/node_modules/express/lib/router/index.js:335:12)<br> &nbsp; &nbsp;at next (/usr/src/app/node_modules/express/lib/router/index.js:275:10)<br> &nbsp; &nbsp;at /usr/src/app/node_modules/aws-xray-sdk-express/lib/express_mw.js:44:23<br> &nbsp; &nbsp;at Namespace.run (/usr/src/app/node_modules/cls-hooked/context.js:97:5)</pre>
+</body>
+</html>
+
+After the fault is injected, ping API response for proddetail nodejs application will send response of error 500 instead of success 200 and hence ping API will fail. Lets try this.
+
+curl the "ping" APi as below from the same bash prompt curl http://proddetail.workshop.svc.cluster.local:3000/ping, and It should show below output
+
+root@proddetail-7b78f4b59f-jv7wd:/usr/src/app# curl http://proddetail.workshop.svc.cluster.local:3000/ping
+
+"Unhealthy" 
+
+And since this ping API is used for Liveness probes healthcheck, the container was subject to the default restart policy.
+
+Now go to another terminal and see the events for this pod.
+export BE_POD_NAME=$(kubectl get pods -n workshop -l app=proddetail -o jsonpath='{.items[].metadata.name}') 
+kubectl describe pod $BE_POD_NAME -n workshop
+
+You will see the below events, and you will notice the kubelet actions of killing the container and restarting it.
+
+Events:
+  Type     Reason     Age                From     Message
+  ----     ------     ----               ----     -------
+  Warning  Unhealthy  34s (x3 over 44s)  kubelet  Liveness probe failed: HTTP probe failed with statuscode: 500
+  Normal   Killing    34s                kubelet  Container proddetail failed liveness probe, will be restarted
+  Normal   Pulling    4s (x2 over 2d4h)  kubelet  Pulling image "public.ecr.aws/u2g6w7p2/eks-workshop-demo/catalog_detail:1.0"
+  Normal   Created    3s (x2 over 2d4h)  kubelet  Created container proddetail
+  Normal   Started    3s (x2 over 2d4h)  kubelet  Started container proddetail
+  Normal   Pulled     3s                 kubelet  Successfully pulled image "public.ecr.aws/u2g6w7p2/eks-workshop-demo/catalog_detail:1.0" in 1.04552283s
+
+kubectl get pod -n workshop -l app=proddetail
+
+It should show below output with one RESTARTS on the container:
+
+NAME                          READY   STATUS    RESTARTS   AGE
+proddetail-7b78f4b59f-xxxx   1/1     Running   1          11m
+
+Readiness Probes
+Below is the Readiness Probes that we have used in proddetail service deployment. The readinessProbe definition explains how a linux command can be configured as healthcheck. 
+We have a file called readiness.txt (https://github.com/aws-containers/eks-app-mesh-polyglot-demo/blob/master/workshop/apps/catalog_detail/readiness.txt) which just has text content "ready" inside the file. This text in the file is used to configure readiness probe and we will use this to understand 
+how kubelet helps to update a deployment with only healthy pods.
+
+    .....
+    .....
+    spec:
+      containers:
+        - name: proddetail
+          .......
+          .......
+          readinessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - cat readiness.txt | grep ready
+            initialDelaySeconds: 15
+            periodSeconds: 3
+    .....
+    .....
+
+Let us also confirm that all the replicas are available to serve traffic when a service is pointed to this deployment.
+kubectl describe deployment proddetail -n workshop | grep Replicas: 
+
+It should show below output:
+
+Replicas:               1 desired | 1 updated | 1 total | 1 available | 0 unavailable
+
+Introduce a Failure
+
+export BE_POD_NAME=$(kubectl get pods -n workshop -l app=proddetail -o jsonpath='{.items[].metadata.name}') 
+kubectl exec -it  $BE_POD_NAME -n workshop -c proddetail -- bash
+
+Then execute the command sed -i 's/ready/fail/' readiness.txt on the container bash terminal to replace the text in the readiness.txt from "ready" to "fail" as below
+
+root@proddetail-7b78f4b59f-kmxjq:/usr/src/app# sed -i 's/ready/fail/' readiness.txt
+See the content of the readiness.txt, you should see "fail" in the file content.
+
+root@proddetail-7b78f4b59f-kmxjq:/usr/src/app# cat readiness.txt 
+
+fail
+Exit from the container bash terminal and type below command. You will see that the 0 replicas are available to serve traffic even when desrired replica is 1 which means the pod will not any more traffic as its Readiness Probe failed.
+
+kubectl describe deployment proddetail -n workshop | grep Replicas: 
+
+It should show below output with 0 available and 1 unavailable which means there is no replica to serve the traffic:
+
+Replicas:               1 desired | 1 updated | 1 total | 0 available | 1 unavailable
+
+Lets revert the changes to bring the pod back
+export BE_POD_NAME=$(kubectl get pods -n workshop -l app=proddetail -o jsonpath='{.items[].metadata.name}') 
+kubectl exec -it  $BE_POD_NAME -n workshop -c proddetail -- bash
+
+Execute the command sed -i 's/fail/ready/' readiness.txt to replace back with "ready" text inside the readiness.txt file
+
+root@proddetail-7b78f4b59f-kmxjq:/usr/src/app# sed -i 's/fail/ready/' readiness.txt
+See the content of the readiness.txt, you should see "ready" in the file content.
+
+root@proddetail-7b78f4b59f-kmxjq:/usr/src/app# cat readiness.txt 
+
+ready
+
+Exit from the container bash terminal and type below command and execute this command again to confirm. It should show below output with 0 available and 1 unavailable which means there is no replica to serve the traffic:
+
+kubectl describe deployment proddetail -n workshop | grep Replicas: 
+
+You should see 1 available replica to serve the traffic
+
+Replicas:               1 desired | 1 updated | 1 total | 1 available | 0 unavailable
+Congratulations! You have successfully implemented healthcheck in your microservice.

@@ -1,0 +1,248 @@
+SetUp
+Pre-requisite
+Make sure you have completed the chapter Using Helm to ensure you have deployed the Product Catalog Application.
+
+Create IAM OIDC provider
+You can skip this step if you have already completed the IRSA chapter.
+
+The IAM OIDC Provider is not enabled by default, you can use the following command to enable it.
+eksctl utils associate-iam-oidc-provider \
+    --region ${AWS_REGION} \
+    --cluster eksworkshop-eksctl \
+    --approve
+
+Enable Amazon Cloudwatch Container Insights
+CloudWatch Container Insights  is a fully managed service that collects, aggregates, and summarizes Amazon EKS metrics and logs. The CloudWatch Container Insights dashboard gives you access to the following information:
+
+CPU and memory utilization
+Task and service counts
+Read/write storage
+Network Rx/Tx
+Container instance counts for clusters, services, and tasks
+
+Fluent Bit (https://fluentbit.io/) is an open source and multi-platform Log Processor and Forwarder which allows you to collect data/logs from different sources, unify and send them to multiple destinations. It’s fully compatible with Docker and Kubernetes environments. Due to its lightweight nature, using Fluent Bit as the default log forwarder in Container Insights on EKS worker nodes will allow you to stream application logs into CloudWatch logs efficiently and reliably.
+
+Create an IAM role for the cloudwatch-agent service account
+eksctl create iamserviceaccount \
+  --cluster eksworkshop-eksctl \
+  --namespace amazon-cloudwatch \
+  --name cloudwatch-agent \
+  --attach-policy-arn  arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy \
+  --override-existing-serviceaccounts \
+  --approve
+
+You should see below output
+
+2021-09-28 20:40:09 [ℹ]  eksctl version 0.67.0
+2021-09-28 20:40:09 [ℹ]  using region us-east-2
+2021-09-28 20:40:10 [ℹ]  1 iamserviceaccount (amazon-cloudwatch/cloudwatch-agent) was included (based on the include/exclude rules)
+2021-09-28 20:40:10 [!]  metadata of serviceaccounts that exist in Kubernetes will be updated, as --override-existing-serviceaccounts was set
+2021-09-28 20:40:10 [ℹ]  1 task: { 2 sequential sub-tasks: { create IAM role for serviceaccount "amazon-cloudwatch/cloudwatch-agent", create serviceaccount "amazon-cloudwatch/cloudwatch-agent" } }
+2021-09-28 20:40:10 [ℹ]  building iamserviceaccount stack "eksctl-eksworkshop-eksctl-addon-iamserviceaccount-amazon-cloudwatch-cloudwatch-agent"
+2021-09-28 20:40:10 [ℹ]  deploying stack "eksctl-eksworkshop-eksctl-addon-iamserviceaccount-amazon-cloudwatch-cloudwatch-agent"
+2021-09-28 20:40:10 [ℹ]  waiting for CloudFormation stack "eksctl-eksworkshop-eksctl-addon-iamserviceaccount-amazon-cloudwatch-cloudwatch-agent"
+2021-09-28 20:40:26 [ℹ]  waiting for CloudFormation stack "eksctl-eksworkshop-eksctl-addon-iamserviceaccount-amazon-cloudwatch-cloudwatch-agent"
+2021-09-28 20:40:43 [ℹ]  waiting for CloudFormation stack "eksctl-eksworkshop-eksctl-addon-iamserviceaccount-amazon-cloudwatch-cloudwatch-agent"
+2021-09-28 20:40:43 [ℹ]  created namespace "amazon-cloudwatch"
+2021-09-28 20:40:43 [ℹ]  created serviceaccount "amazon-cloudwatch/cloudwatch-agent"
+
+Create an IAM role for the fluent-bit service account
+
+eksctl create iamserviceaccount \
+  --cluster eksworkshop-eksctl \
+  --namespace amazon-cloudwatch \
+  --name fluent-bit \
+  --attach-policy-arn  arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy \
+  --override-existing-serviceaccounts \
+  --approve
+
+You should see below output
+
+2021-09-28 21:13:34 [ℹ]  eksctl version 0.67.0
+2021-09-28 21:13:34 [ℹ]  using region us-east-2
+2021-09-28 21:13:34 [ℹ]  1 existing iamserviceaccount(s) (amazon-cloudwatch/cloudwatch-agent) will be excluded
+2021-09-28 21:13:34 [ℹ]  1 iamserviceaccount (amazon-cloudwatch/fluent-bit) was included (based on the include/exclude rules)
+2021-09-28 21:13:34 [!]  metadata of serviceaccounts that exist in Kubernetes will be updated, as --override-existing-serviceaccounts was set
+2021-09-28 21:13:34 [ℹ]  1 task: { 2 sequential sub-tasks: { create IAM role for serviceaccount "amazon-cloudwatch/fluent-bit", create serviceaccount "amazon-cloudwatch/fluent-bit" } }
+2021-09-28 21:13:34 [ℹ]  building iamserviceaccount stack "eksctl-eksworkshop-eksctl-addon-iamserviceaccount-amazon-cloudwatch-fluent-bit"
+2021-09-28 21:13:34 [ℹ]  deploying stack "eksctl-eksworkshop-eksctl-addon-iamserviceaccount-amazon-cloudwatch-fluent-bit"
+2021-09-28 21:13:34 [ℹ]  waiting for CloudFormation stack "eksctl-eksworkshop-eksctl-addon-iamserviceaccount-amazon-cloudwatch-fluent-bit"
+2021-09-28 21:13:51 [ℹ]  waiting for CloudFormation stack "eksctl-eksworkshop-eksctl-addon-iamserviceaccount-amazon-cloudwatch-fluent-bit"
+2021-09-28 21:14:08 [ℹ]  waiting for CloudFormation stack "eksctl-eksworkshop-eksctl-addon-iamserviceaccount-amazon-cloudwatch-fluent-bit"
+2021-09-28 21:14:08 [ℹ]  created serviceaccount "amazon-cloudwatch/fluent-bit"
+
+Now, Deploy Container Insights in the EKS cluster
+ClusterName=eksworkshop-eksctl
+FluentBitHttpPort='2020'
+FluentBitReadFromHead='Off'
+[[ ${FluentBitReadFromHead} = 'On' ]] && FluentBitReadFromTail='Off'|| FluentBitReadFromTail='On'
+[[ -z ${FluentBitHttpPort} ]] && FluentBitHttpServer='Off' || FluentBitHttpServer='On'
+curl https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/latest/k8s-deployment-manifest-templates/deployment-mode/daemonset/container-insights-monitoring/quickstart/cwagent-fluent-bit-quickstart.yaml | sed 's/{{cluster_name}}/'${ClusterName}'/;s/{{region_name}}/'${AWS_REGION}'/;s/{{http_server_toggle}}/"'${FluentBitHttpServer}'"/;s/{{http_server_port}}/"'${FluentBitHttpPort}'"/;s/{{read_from_head}}/"'${FluentBitReadFromHead}'"/;s/{{read_from_tail}}/"'${FluentBitReadFromTail}'"/' | kubectl apply -f - 
+
+You should see below output
+
+namespace/amazon-cloudwatch configured
+serviceaccount/cloudwatch-agent configured
+clusterrole.rbac.authorization.k8s.io/cloudwatch-agent-role created
+clusterrolebinding.rbac.authorization.k8s.io/cloudwatch-agent-role-binding created
+configmap/cwagentconfig created
+daemonset.apps/cloudwatch-agent created
+configmap/fluent-bit-cluster-info created
+serviceaccount/fluent-bit configured
+clusterrole.rbac.authorization.k8s.io/fluent-bit-role created
+clusterrolebinding.rbac.authorization.k8s.io/fluent-bit-role-binding created
+configmap/fluent-bit-config created
+daemonset.apps/fluent-bit created
+
+You can find the full information and manual install steps here (https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Container-Insights-setup-EKS-quickstart.html).
+
+You can verify all the DaemonSets have been deployed by running the following command.
+kubectl -n amazon-cloudwatch get daemonsets
+
+NAME               DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR   AGE
+cloudwatch-agent   3         3         3       3            3           <none>          4m28s
+fluent-bit         3         3         3       3            3           <none>          4m28s
+
+You can also verify the deployment of DaemonSets by logging into console and navigate to Amazon EKS -> Cluster -> Resources -> DaemonSets
+
+Enable Prometheus in CloudWatch
+CloudWatch Container Insights monitoring for Prometheus automates the discovery of Prometheus metrics from containerized systems and workloads. 
+Prometheus is an open-source systems monitoring and alerting toolkit. The CloudWatch agent supports the standard Prometheus scrape configurations as documented in scrape_config (https://prometheus.io/docs/prometheus/latest/configuration/configuration/#scrape_config) in the Prometheus documentation. 
+The CloudWatch agent with Prometheus support automatically collects metrics from services and workloads. Prometheus metrics collected from Amazon EKS and Kubernetes clusters are in the ContainerInsights/Prometheus namespace.
+
+In our frontend nodejs application, we have enabled Prometheus default metrics. See here (https://github.com/aws-containers/eks-app-mesh-polyglot-demo/blob/master/workshop/apps/frontend_node/server.js#L16)
+
+Create an IAM role for the prometheus service account
+eksctl create iamserviceaccount \
+  --cluster eksworkshop-eksctl \
+  --namespace amazon-cloudwatch \
+  --name cwagent-prometheus \
+  --attach-policy-arn  arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy \
+  --override-existing-serviceaccounts \
+  --approve
+
+The output should be as below
+
+2021-09-28 21:28:40 [ℹ]  eksctl version 0.67.0
+2021-09-28 21:28:40 [ℹ]  using region us-east-2
+2021-09-28 21:28:40 [ℹ]  2 existing iamserviceaccount(s) (amazon-cloudwatch/cloudwatch-agent,amazon-cloudwatch/fluent-bit) will be excluded
+2021-09-28 21:28:40 [ℹ]  1 iamserviceaccount (amazon-cloudwatch/cwagent-prometheus) was included (based on the include/exclude rules)
+2021-09-28 21:28:40 [!]  metadata of serviceaccounts that exist in Kubernetes will be updated, as --override-existing-serviceaccounts was set
+2021-09-28 21:28:40 [ℹ]  1 task: { 2 sequential sub-tasks: { create IAM role for serviceaccount "amazon-cloudwatch/cwagent-prometheus", create serviceaccount "amazon-cloudwatch/cwagent-prometheus" } }
+2021-09-28 21:28:40 [ℹ]  building iamserviceaccount stack "eksctl-eksworkshop-eksctl-addon-iamserviceaccount-amazon-cloudwatch-cwagent-prometheus"
+2021-09-28 21:28:40 [ℹ]  deploying stack "eksctl-eksworkshop-eksctl-addon-iamserviceaccount-amazon-cloudwatch-cwagent-prometheus"
+2021-09-28 21:28:40 [ℹ]  waiting for CloudFormation stack "eksctl-eksworkshop-eksctl-addon-iamserviceaccount-amazon-cloudwatch-cwagent-prometheus"
+2021-09-28 21:29:13 [ℹ]  created serviceaccount "amazon-cloudwatch/cwagent-prometheus"
+
+Install cloudwatch agent for prometheus
+
+This YAML have jobs configured that are scraped, and the metrics are sent to CloudWatch.
+
+cd ~/environment/eks-app-mesh-polyglot-demo/workshop/
+kubectl apply -f prometheus-eks.yaml
+
+The output should be as below
+
+namespace/amazon-cloudwatch unchanged
+configmap/prometheus-cwagentconfig created
+configmap/prometheus-config created
+serviceaccount/cwagent-prometheus configured
+clusterrole.rbac.authorization.k8s.io/cwagent-prometheus-role created
+clusterrolebinding.rbac.authorization.k8s.io/cwagent-prometheus-role-binding created
+deployment.apps/cwagent-prometheus created
+
+The above prometheus-eks.yaml (https://github.com/aws-containers/eks-app-mesh-polyglot-demo/blob/master/workshop/prometheus-eks.yaml) file contains the below configuration for scraping the prometheus metrics
+
+Confirm that the agent is running
+
+1
+kubectl get pod -l "app=cwagent-prometheus" -n amazon-cloudwatch
+
+NAME                                 READY   STATUS    RESTARTS   AGE
+cwagent-prometheus-95896694d-99pwb   1/1     Running   0          2m33s
+XRay Trace
+AWS X-Ray helps developers and DevOps engineers quickly understand how an application and its underlying services are performing. When it’s integrated with AWS App Mesh, the combination makes for a powerful analytical tool. AWS X-Ray provides application-tracing functionality, giving deep insights into all microservices deployed. With X-Ray, every request can be traced as it flows through the involved microservices. This provides your DevOps teams the insights they need to understand how your services interact with their peers and enables them to analyze and debug issues much faster.
+
+To instrument your application code, use the X-Ray SDK. The SDK records data about incoming and outgoing requests and sends it to the X-Ray daemon, which relays the data in batches to X-Ray. See the examples in the code below for our Product Catalog demo application.
+
+Frontend - https://github.com/aws-containers/eks-app-mesh-polyglot-demo/blob/master/workshop/apps/frontend_node/server.js#L8
+Product Catalog - https://github.com/aws-containers/eks-app-mesh-polyglot-demo/blob/master/workshop/apps/product_catalog/app.py#L25
+Catalog Detail - https://github.com/aws-containers/eks-app-mesh-polyglot-demo/blob/master/workshop/apps/catalog_detail/app.js
+
+Create the IAM role for service account for X-Ray
+
+eksctl create iamserviceaccount \
+  --cluster eksworkshop-eksctl \
+  --namespace default \
+  --name xray-daemon \
+  --attach-policy-arn  arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess \
+  --override-existing-serviceaccounts \
+  --approve
+
+2021-07-20 05:48:11 [ℹ]  eksctl version 0.56.0
+2021-07-20 05:48:11 [ℹ]  using region us-west-2
+....
+2021-07-20 05:48:46 [ℹ]  created serviceaccount "default/xray-daemon"
+
+Apply a label to the service account
+
+kubectl label serviceaccount xray-daemon app=xray-daemon
+
+serviceaccount/xray-daemon labeled
+
+To deploy the X-Ray DaemonSet
+The xray-eks.yaml (https://github.com/aws-containers/eks-app-mesh-polyglot-demo/blob/master/workshop/xray-eks.yaml) file contains the configuration for creating daemonset, configmap and service or x-ray setup.
+
+cd ~/environment/eks-app-mesh-polyglot-demo/workshop/
+kubectl apply -f xray-eks.yaml
+
+daemonset.apps/xray-daemon created
+configmap/xray-config created
+service/xray-service created
+
+Lets confirm if everything is deployed
+kubectl describe daemonset xray-daemon
+
+Name:           xray-daemon
+Selector:       app=xray-daemon
+Node-Selector:  <none>
+Labels:         <none>
+Annotations:    deprecated.daemonset.template.generation: 1
+Desired Number of Nodes Scheduled: 3
+Current Number of Nodes Scheduled: 3
+Number of Nodes Scheduled with Up-to-date Pods: 3
+Number of Nodes Scheduled with Available Pods: 3
+Number of Nodes Misscheduled: 0
+Pods Status:  3 Running / 0 Waiting / 0 Succeeded / 0 Failed
+....
+
+To view the logs for all of the X-Ray daemon pods run the following
+kubectl logs -l app=xray-daemon
+
+2021-07-20T05:55:03Z [Info] Successfully sent batch of 1 segments (0.004 seconds)
+2021-07-20T05:55:06Z [Info] Successfully sent batch of 1 segments (0.004 seconds)
+2021-07-20T05:55:07Z [Info] Successfully sent batch of 2 segments (0.004 seconds)
+
+To instrument your application code, use the X-Ray SDK (https://docs.aws.amazon.com/xray/index.html). The SDK records data about incoming and outgoing requests and sends it to the X-Ray daemon, which relays the data in batches to X-Ray. See the examples in the code below for our Product Catalog demo application.
+
+Frontend - https://github.com/aws-containers/eks-app-mesh-polyglot-demo/blob/master/workshop/apps/frontend_node/server.js#L8
+Product Catalog - https://github.com/aws-containers/eks-app-mesh-polyglot-demo/tree/master/workshop/apps/product_catalog/app.py#L23
+Catalog Detail - https://github.com/aws-containers/eks-app-mesh-polyglot-demo/tree/master/workshop/apps/catalog_detail/app.js#L8
+
+(Optional) Enable Amazon EKS Control Plane logs
+
+If you enable Amazon EKS Control Plane logging, you will be charged the standard CloudWatch Logs data ingestion and storage costs for any logs sent to CloudWatch Logs from your cluster. You are also charged for any AWS resources, such as Amazon EC2 instances or Amazon EBS volumes, that you provision as part of your cluster.
+CloudWatch logging for EKS control plane is not enabled by default due to data ingestion and storage costs. You can enable using below command.
+
+You can skip the below step if the Event Engine blueprint has already enabled EKS control plane logging. You can verify this in the EKS console.
+eksctl utils update-cluster-logging \
+    --enable-types all \
+    --region ${AWS_REGION} \
+    --cluster eksworkshop-eksctl \
+    --approve
+
+[ℹ]  eksctl version 0.37.0
+[ℹ]  using region us-west-2
+[✔]  CloudWatch logging for cluster "eksworkshop-eksctl" in "us-west-2" is already up-to-date
+
+You can log into console and navigate to Amazon EKS -> Cluster -> Logging

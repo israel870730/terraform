@@ -1,0 +1,171 @@
+Introduction
+Before we show how AWS KMS is used to encrypt Kubernetes secret and how Kubernetes secrets are created from AWS Secrets Manager secrets, we are going to deploy a MYSQL database using StatefulSet. The MYSQL database will be used in the subsequent chapters.
+
+In this example, we used the topology that has a single primary server and one replica, using asynchronous row-based replication. This example MySQL deployment consists of a ConfigMap, two Services, a Kubernetes secret for the root password and a StatefulSet.
+
+Create ConfigMap
+ConfigMap  allows you to decouple configuration artifacts and secrets from image content to keep containerized applications portable. Using ConfigMap, you can independently control MySQL configuration. The ConfigMap stores source.cnf, replica.cnf and passes them when initializing leader and follower pods defined in StatefulSet:
+
+source.cnf is for the MySQL leader pod which has binary log option (log-bin) to provides a record of the data changes to be sent to follower servers.
+replica.cnf is for follower pods which have super-read-only option.
+Run the following commands to create the ConfigMap.
+
+mkdir ${HOME}/environment/mysql_statefulset
+cd ${HOME}/environment/mysql_statefulset
+
+cat << EoF > ${HOME}/environment/mysql_statefulset/mysql-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-config
+  namespace: workshop
+  labels:
+    app: mysql
+data:
+  source.cnf: |
+    # Apply this config only on the leader.
+    [mysqld]
+    log-bin
+  replica.cnf: |
+    # Apply this config only on followers.
+    [mysqld]
+    # super-read-only
+EoF
+
+Create "mysql-config" ConfigMap.
+kubectl create -f ${HOME}/environment/mysql_statefulset/mysql-configmap.yaml
+
+Output:
+configmap/mysql-config created
+
+Create Services
+Kubernetes Service  defines a logical set of Pods and a policy by which to access them.
+
+Service can be exposed in different ways by specifying a type  in the serviceSpec. StatefulSet currently requires a Headless Service (https://kubernetes.io/docs/concepts/services-networking/service/#headless-services) to control the domain of its Pods, 
+directly reach each Pod with stable DNS entries. The Headless Service provides a home for the DNS entries that the StatefulSet controller creates for each Pod that's part of the set. 
+By specifying "None" for the clusterIP, you can create Headless Service.
+
+Because the Headless Service is named mysql, the Pods are accessible by resolving .mysql from within any other Pod in the same Kubernetes cluster and namespace.
+ You can see the mysql service is for DNS resolution so that when pods are placed by StatefulSet controller, pods can be resolved using pod-name.mysql.
+
+The Client Service, called mysql-read, is a normal client Service with its own cluster IP that distributes connections across all MySQL Pods that report being Ready. 
+The set of potential endpoints includes the primary MySQL server and all replicas.
+
+Copy/Paste the following commands into your Cloud9 Terminal.
+cat << EoF > ${HOME}/environment/mysql_statefulset/mysql-services.yaml
+# Headless service for stable DNS entries of StatefulSet members.
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: workshop
+  name: mysql
+  labels:
+    app: mysql
+spec:
+  ports:
+  - name: mysql
+    port: 3306
+  clusterIP: None
+  selector:
+    app: mysql
+---
+# Client service for connecting to any MySQL instance for reads.
+# For writes, you must instead connect to the leader: mysql-0.mysql.
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: workshop
+  name: mysql-read
+  labels:
+    app: mysql
+spec:
+  ports:
+  - name: mysql
+    port: 3306
+  selector:
+    app: mysql
+EoF
+
+Create service mysql and mysql-read by following command
+
+kubectl create -f ${HOME}/environment/mysql_statefulset/mysql-services.yaml
+
+Output:
+service/mysql created
+service/mysql-read created
+
+Create StatefulSet
+StatefulSet consists of serviceName, replicas, template and volumeClaimTemplates:
+
+serviceName is "mysql", headless service we created in previous section
+replicas is 2, the desired number of pod
+template is the configuration of pod
+volumeClaimTemplates is to claim volume for pod based on storageClassName gp2
+
+Click here (https://github.com/aws-containers/eks-app-mesh-polyglot-demo/blob/master/workshop/mysql-statefulset-with-secret.yaml) to see the statefulset deployment used for our Product Catalog Application in this chapter.
+
+Percona Xtrabackup (https://www.percona.com/software/mysql-database/percona-xtrabackup) is used in the template to clone source MySQL server to its followers.
+
+Create the StatefulSet "mysql" by following command.
+
+kubectl apply -f ${HOME}/environment/eks-app-mesh-polyglot-demo/workshop/mysql-statefulset-with-secret.yaml
+
+Output:
+secret/mysql-secret created
+statefulset.apps/mysql created
+
+Watch the status of StatefulSet.
+
+kubectl -n workshop rollout status statefulset mysql
+It will take few minutes for pods to initialize and have StatefulSet created.
+
+Waiting for 2 pods to be ready...
+Waiting for 1 pods to be ready...
+partitioned roll out complete: 2 new pods have been updated...
+
+Open another Cloud9 Terminal and watch the progress of pods creation using the following command.
+kubectl -n workshop get pods -l app=mysql --watch
+
+You can see ordered, graceful deployment with a stable, unique name for each pod.
+
+NAME    READY STATUS          RESTARTS AGE
+mysql-0 0/2   Init:0/2        0        16s
+mysql-0 0/2   Init:1/2        0        17s
+mysql-0 0/2   PodInitializing 0        18s
+mysql-0 1/2   Running         0        19s
+mysql-0 2/2   Running         0        25s
+mysql-1 0/2   Pending         0        0s
+mysql-1 0/2   Pending         0        0s
+mysql-1 0/2   Init:0/2        0        0s
+mysql-1 0/2   Init:1/2        0        10s
+mysql-1 0/2   PodInitializing 0        11s
+mysql-1 1/2   Running         0        12s
+mysql-1 2/2   Running         0        16s
+
+Press Ctrl+C to stop watching.
+
+Check the dynamically created PVC by following command.
+kubectl -n workshop get pvc -l app=mysql
+
+We can see data-mysql-0, and data-mysql-1 have been created with the STORAGECLASS mysql-gp2.
+
+NAME           STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS         AGE
+data-mysql-0   Bound    pvc-2a9bb222-3fbe-11ea-94be-0aff3e98c5a0   10Gi       RWO            mysql-gp2            2m
+data-mysql-1   Bound    pvc-47076f1d-3fbe-11ea-94be-0aff3e98c5a0   10Gi       RWO            mysql-gp2            2m
+
+Create the database and the table in mysql
+We are creating the database dev and table product in below command and inserting a product into the table. Later we will see how this data will show up in our application which is accessing this database.
+
+You can use mysql-client to send some data to the leader, mysql.workshop by running the following command.
+
+kubectl -n workshop run mysql-client --image=mysql:5.7 -i --rm --restart=Never --\
+  mysql -uroot -ptest1234 -h mysql-0.mysql.workshop <<EOF
+CREATE DATABASE dev;
+CREATE TABLE dev.product (prodId VARCHAR(120), prodName VARCHAR(120));
+INSERT INTO dev.product (prodId,prodName) VALUES ('999','Mountain Bike');
+EOF
+
+You should see the following output
+
+If you don't see a command prompt, try pressing enter.
+pod "mysql-client" deleted

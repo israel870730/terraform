@@ -1,0 +1,31 @@
+https://docs.aws.amazon.com/es_es/eks/latest/userguide/metrics-server.html
+https://aws.amazon.com/es/premiumsupport/knowledge-center/eks-metrics-server/?nc1=h_ls
+
+
+kubectl get endpoints -n kube-system
+kubectl get apiservices v1beta1.metrics.k8s.io
+kubectl describe apiservices v1beta1.metrics.k8s.io
+
+
+La primera ves cuando dio error hice esto:
+
+Nota: La ultima instalacion que hice me dio problemas pq cuando liste el endpoints(kubectl get endpoints) tenia el puerto 4443 y no el 443,
+lo corregi en este fichero(components.yaml) que esta lista para deployar.
+El lcuster fue creado con el ami que trae por defecto EKS
+
+La segunda ves hice esto: (https://github.com/kubernetes-sigs/metrics-server/issues/1056)
+ - modificque el deployment con estos valores (components2.yaml), cambie el port por 10250 y agregue - --kubelet-insecure-tls=true al deployment
+            args:
+              - --cert-dir=/tmp
+              - --secure-port=10250
+              - --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname
+              - --kubelet-use-node-status-port
+              - --metric-resolution=15s
+              - --kubelet-insecure-tls=true
+            ports:
+              - $patch: replace
+              - containerPort: 10250
+                name: https
+                protocol: TCP
+ 
+Este cluster que me dio error fue creado con una AMI personalizada para eks

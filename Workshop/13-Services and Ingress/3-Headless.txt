@@ -1,0 +1,243 @@
+In this section we will explore the headless service. The focus will be the Catalog Detail tier of the Product Catalog Application, which is represented with proddetail deployment and proddetail service in the workshop namespace.
+
+Headless service characteristics are following :
+
+Headless service is accessible only from within the cluster. (just like ClusterIP service)
+Kubernetes DNS server returns multiple A records for the DNS name of a headless service. Each A record points to the IP address of an individual endpoint(pod) backing that service.
+A virtual IP address is not allocated for the headless service. So there is no load balancing performed (which also means that kube-proxy does not play a role within this type of service).
+Headless service addresses the use cases where the clients need to connect to any or all of those pods directly using the endpoint (pod) IP address. A scenario for this type of direct connectivity would be with databases where the client needs to connect to the primary database node. In those scenarios a client would need to figure out the endpoint IP (rather than the service' s virtual IP address) and then connect to them directly.
+
+For a more sophisticated real life use case involving databases, you can also have a look at how headless service is used with StatefulSets in the StatefulSet using AWS EBS  chapter.
+
+In the upcoming steps, we will demonstrate how the list of endpoints (pods) automatically gets updated and how requests get forwarded to the available endpoints.
+
+1. Create the service
+
+Create a headless service with the name myservice which groups the pods of the proddetail deployment.
+
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: workshop
+  name: myservice
+  labels:
+    app: proddetail
+spec:
+  ports:
+  - name: http # name given to the port of the service
+    port: 80 # the port which this service is running on
+  clusterIP: None # makes this service headless
+  selector:
+    app: proddetail # the service picks the pods which have this label 
+EOF
+
+Please read the comments in the command snippet above to understand the configuration used in this manifest.
+
+Output
+
+service/myservice created
+
+2. Review the service
+
+Describe the service created in the previous step.
+kubectl describe services myservice -n workshop
+
+Sample Output
+
+Name:              myservice
+Namespace:         workshop
+Labels:            app=proddetail
+Annotations:       <none>
+Selector:          app=proddetail
+Type:              ClusterIP
+IP Family Policy:  SingleStack
+IP Families:       IPv4
+IP:                None
+IPs:               None
+Port:              http  80/TCP
+TargetPort:        80/TCP
+Endpoints:         192.168.4.217:80
+Session Affinity:  None
+Events:            <none>
+In the output shown above,
+
+Selector (app=proddetail) the label of the service itself. This is not the one used for identifying pods.
+Notice that IP is none as there is no virtual IP assigned to this service.
+Port (http 80) , name assigned to the port and the actual port number assigned to the port which the service listens on each worker node.
+TargetPort (80) is the port which the application listens on the pod.
+Endpoints shows the list of the endpoints (pods) backing the service. (192.168.4.217 is the single proddetail pod' s IP address)
+Note : We did not define TargetPort manually in the manifest in the previous step. In that case it automatically inherits the port defined for the service. (80)
+
+Note : IP Family Policy , IP Families and IPs fields are all related to dual-stack environments. For more information please have a look at IPv4/IPv6 Dual Stack  of the Kubernetes documentation and Services  section of the Kubernetes API guide.
+
+Another thing worth mentioning is that when we created the headless service myservice earlier, Kubernetes DNS (CoreDNS  by default in EKS) creates an A record per pod for the service DNS Name; each A record points out to an individual endpoint backing the service. The format of the DNS name  for the service is <service-name>.<namespace-name>.svc.<cluster-domain-name>. In this case it is myservice.workshop.svc.cluster.local.
+
+3. Examining the DNS record for the service
+
+Let's identify the pod name of the prodcatalog pod in the environment and then get a shell to that pod.
+
+prodcatalogpod=$(kubectl get pods -n workshop | awk '{print $1}' | grep -e "prodcatalog")
+kubectl exec -it $prodcatalogpod -n workshop -- sh
+
+Output
+
+#
+Update the package repositories on the pod.
+apt-get update
+
+Sample Output
+
+Get:1 http://security.debian.org/debian-security buster/updates InRelease [65.4 kB]
+Get:2 http://deb.debian.org/debian buster InRelease [122 kB]
+Get:3 http://deb.debian.org/debian buster-updates InRelease [51.9 kB]
+Get:4 http://security.debian.org/debian-security buster/updates/main amd64 Packages [317 kB]
+Get:5 http://deb.debian.org/debian buster/main amd64 Packages [7906 kB]
+Get:6 http://deb.debian.org/debian buster-updates/main amd64 Packages [8792 B]
+Fetched 8470 kB in 2s (4809 kB/s)
+Reading package lists... Done
+#
+
+Install the dnsutils package on the pod.
+apt-get install dnsutils -y
+
+Sample Output
+
+Reading package lists... Done
+Building dependency tree       
+Reading state information... Done
+The following additional packages will be installed:
+  bind9-host geoip-database libbind9-161 libdns1104 libfstrm0 libgeoip1 libirs161 libisc1100 libisccc161 libisccfg163 libjson-c3 liblmdb0 liblwres161 libprotobuf-c1
+|
+OUTPUT OMITTED
+|
+Setting up dnsutils (1:9.11.5.P4+dfsg-5.1+deb10u6) ...
+Processing triggers for libc-bin (2.28-10) ...
+# 
+Let’ s now examine the DNS resolution for the headless service DNS name.
+nslookup myservice.workshop.svc.cluster.local
+
+Sample Output
+
+Server: 10.100.0.10
+Address: 10.100.0.10#53
+
+Name: myservice.workshop.svc.cluster.local
+Address: 192.168.4.217
+#
+As shown above, the only IP address returned for the DNS query is the proddetail pod IP, which is the only pod backing the myservice.
+
+Exit from the prodcatalog pod's shell by typing exit.
+
+4. Scale out the deployment
+Scale the deployment to three pods.
+
+kubectl scale deployment proddetail --replicas=3 -n workshop
+
+Output
+
+deployment.apps/proddetail scaled
+Note : You can optionally verify the rollout status of the deployment using kubectl rollout status deployment proddetail -n workshop
+
+Verify the number of pods in the deployment shows 3/3 in the READY column. This may take a minute or two.
+kubectl get deployments -n workshop
+
+Output
+
+NAME          READY   UP-TO-DATE   AVAILABLE   AGE
+frontend      1/1     1            1           6d18h
+prodcatalog   1/1     1            1           6d18h
+proddetail    3/3     3            3           6d18h
+
+Verify the pod IP addresses for the deployment.
+kubectl get pods -n workshop --selector app=proddetail -o wide
+
+Sample Output
+
+NAME                          READY   STATUS    RESTARTS   AGE     IP               NODE                                          NOMINATED NODE   READINESS GATES
+proddetail-6dbddf7fd7-5gmtl   1/1     Running   0          5m47s   192.168.37.193   ip-192-168-93-31.eu-west-1.compute.internal   <none>           <none>
+proddetail-6dbddf7fd7-nxk56   1/1     Running   1          6d18h   192.168.4.217    ip-192-168-22-88.eu-west-1.compute.internal   <none>           <none>
+proddetail-6dbddf7fd7-tgh2m   1/1     Running   0          5m47s   192.168.91.18    ip-192-168-93-31.eu-west-1.compute.internal   <none>           <none>
+Note : Instead of the above command you can also use kubectl get pods -l=app=proddetail -n workshop -o wide . The parameter -l stands for label.
+
+5. Review the updated list of endpoints
+
+Verify that the list of endpoints has changed for the service.
+kubectl describe services myservice -n workshop
+
+Sample Output
+
+Name:              myservice
+Namespace:         workshop
+Labels:            app=proddetail
+Annotations:       <none>
+Selector:          app=proddetail
+Type:              ClusterIP
+IP Family Policy:  SingleStack
+IP Families:       IPv4
+IP:                None
+IPs:               None
+Port:              http  80/TCP
+TargetPort:        80/TCP
+Endpoints:         192.168.37.193:80,192.168.4.217:80,192.168.91.18:80
+Session Affinity:  None
+Events:            <none>
+
+We can now see that Endpoints shows three IP addresses which belong to the pods that are part of the proddetail deployment.
+
+How can we verify the way endpoints get picked ? (Click to expand)
+
+6. Testing DNS again
+
+Get a shell to the prodcatalog pod again.
+prodcatalogpod=$(kubectl get pods -n workshop | awk '{print $1}' | grep -e "prodcatalog")
+kubectl exec -it $prodcatalogpod -n workshop -- sh
+
+Output
+
+#
+Let’ s once again examine the DNS resolution for the headless service.
+
+nslookup myservice.workshop.svc.cluster.local
+
+Sample Output
+Server:         10.100.0.10
+Address:        10.100.0.10#53
+
+Name:   myservice.workshop.svc.cluster.local
+Address: 192.168.4.217
+Name:   myservice.workshop.svc.cluster.local
+Address: 192.168.91.18
+Name:   myservice.workshop.svc.cluster.local
+Address: 192.168.37.193
+
+As shown above, this time the Kubernetes DNS responds with multiple A records, each pointing out to an individual pod IP.
+
+Exit from the prodcatalog pod's shell by typing exit.
+In summary, a headless service does not do any load balancing nor assigns a virtual IP address to the service. However it instead plays a role from DNS standpoint, where Kubernetes DNS keeps multiple A records (each pointing out to an individual pod IP backing that service), enabling the client to connect to the pods directly.
+
+7. Cleanup
+
+Scale in deployment back to one pod.
+kubectl scale deployment proddetail --replicas=1 -n workshop
+
+Output
+deployment.apps/proddetail scaled
+
+Verify the number of pods in the proddetail deployment shows 1/1 in the READY column. This may take a minute or two.
+kubectl get deployment -n workshop
+
+Output
+
+NAME          READY   UP-TO-DATE   AVAILABLE   AGE
+frontend      1/1     1            1           6d18h
+prodcatalog   1/1     1            1           6d18h
+proddetail    1/1     1            1           6d18h
+
+Delete the headless service.
+kubectl delete service myservice -n workshop
+
+Output
+
+service "myservice" deleted
+This concludes the Headless section.

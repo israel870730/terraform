@@ -1,0 +1,68 @@
+About the Amazon EFS CSI Driver
+On Amazon EKS, the open-source EFS Container Storage Interface (CSI)(https://github.com/kubernetes-sigs/aws-efs-csi-driver) driver is used to manage the attachment of Amazon EFS volumes to Kubernetes Pods.
+
+Deploy EFS CSI Driver
+
+We are going to install the driver using helm:
+helm repo add aws-efs-csi-driver https://kubernetes-sigs.github.io/aws-efs-csi-driver/
+helm repo update
+helm upgrade --install aws-efs-csi-driver --namespace kube-system aws-efs-csi-driver/aws-efs-csi-driver
+
+Output should show
+
+Release "aws-efs-csi-driver" does not exist. Installing it now.
+NAME: aws-efs-csi-driver
+LAST DEPLOYED: Mon Oct  4 17:52:15 2021
+NAMESPACE: kube-system
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+To verify that aws-efs-csi-driver has started, run:
+
+    kubectl get pod -n kube-system -l "app.kubernetes.io/name=aws-efs-csi-driver,app.kubernetes.io/instance=aws-efs-csi-driver"
+
+Verify pods have been deployed:
+kubectl get pods -n kube-system
+
+Should return new pods with csi driver:
+
+Output:
+
+NAME                       READY   STATUS    RESTARTS   AGE
+efs-csi-controller-78587b6668-2fhsp   3/3     Running   0          4h41m
+efs-csi-controller-78587b6668-khg82   3/3     Running   0          4h41m
+efs-csi-node-2s2gz                    3/3     Running   0          35m
+efs-csi-node-fnl2x                    3/3     Running   0          35m
+efs-csi-node-jrps4                    3/3     Running   0          35m
+
+If you have created the cluster using EKS Terraform Blueprint, please click on the arrow for instructions on addtional steps that need to be performed
+Create Persistent Volume
+
+Next we will deploy a persistent volume using the EFS created. We need to update the below manifest yaml with the EFS ID we just created:
+sed -i "s/EFS_VOLUME_ID/$FILE_SYSTEM_ID/g" ~/environment/eks-app-mesh-polyglot-demo/workshop/efs-pvc.yaml
+
+And then apply:
+kubectl apply -f ~/environment/eks-app-mesh-polyglot-demo/workshop/efs-pvc.yaml
+
+Output should show as below
+
+storageclass.storage.k8s.io/efs-sc created
+persistentvolume/efs-pvc created
+persistentvolumeclaim/efs-storage-claim created
+
+Next, check if a PVC resource was created. The output from the command should look similar to what is shown below, with the STATUS field set to Bound.
+kubectl get pvc -n workshop
+
+Output:
+
+NAME                STATUS   VOLUME    CAPACITY   ACCESS MODES   STORAGECLASS   AGE
+efs-storage-claim   Bound    efs-pvc   5Gi        RWX            efs-sc         4s
+
+A PV corresponding to the above PVC is dynamically created. Check its status with the following command.
+kubectl get pv
+
+Output:
+
+NAME      CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS   CLAIM                       STORAGECLASS   REASON   AGE
+efs-pvc   5Gi        RWX            Retain           Bound    workshop/efs-storage-claim   efs-sc                  11s

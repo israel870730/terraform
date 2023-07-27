@@ -1,0 +1,4 @@
+Restore ProductCatalog Application
+
+cd ~/environment/eks-app-mesh-polyglot-demo
+helm upgrade -f ~/environment/eks-app-mesh-polyglot-demo/workshop/helm-chart/values.yaml workshop workshop/helm-chart/

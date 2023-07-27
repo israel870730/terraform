@@ -1,0 +1,2 @@
+https://dev.to/thenjdevopsguy/configuring-hashicorp-vault-in-aws-for-high-availability-in-kubernetes-nod
+https://www.youtube.com/watch?v=afxl3kOxD9A

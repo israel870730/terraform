@@ -1,0 +1,80 @@
+Generic Testing
+We have inserted one record into the mysql database dev into the table product in previous chapter.
+
+Now lets run the following to see if the follower replica (mysql-read) received the data.
+
+kubectl -n workshop run mysql-client --image=mysql:5.7 -it --rm --restart=Never --\
+  mysql -h mysql-read -e "SELECT * FROM dev.product"
+
+The output should look like this.
+
++--------+---------------+
+| prodId | prodName      |
++--------+---------------+
+| 999    | Mountain Bike |
++--------+---------------+
+pod "mysql-client" deleted
+
+Application Testing
+Lets also see if we are able to access this newly created mysql database in our Product Catalog Application Our prodcatalog service will access this database to read and write the product details.
+
+We are using "values-ebs.yaml" that uses the container image for prodcatalog service which accesses the database. Click here (https://github.com/aws-containers/eks-app-mesh-polyglot-demo/blob/master/workshop/apps/product_catalog/app_ebs.py) 
+to see the application code for this deployment. Click here (https://github.com/aws-containers/eks-app-mesh-polyglot-demo/blob/master/workshop/helm-chart/values-ebs.yaml) to see the Helm Values details for this deployment.
+
+cd ~/environment/eks-app-mesh-polyglot-demo
+helm upgrade --reuse-values -f ~/environment/eks-app-mesh-polyglot-demo/workshop/helm-chart/values-ebs.yaml workshop workshop/helm-chart/
+
+Get the Loadbalancer url
+
+export LB_NAME=$(kubectl get svc frontend -n workshop -o jsonpath="{.status.loadBalancer.ingress[*].hostname}") 
+echo $LB_NAME
+
+It will look show the product you just created in the Product Application UI.
+
+Lets insert one more product "Road Bike" with Id as "1000" and see
+
+Now lets verify the data in the Mysql database, you should see the new product in the product table that we added from our application from the UI.
+
+kubectl -n workshop run mysql-client --image=mysql:5.7 -it --rm --restart=Never --\
+  mysql -h mysql-read -e "SELECT * FROM dev.product"
+
+The output should look like this.
+
++--------+---------------+
+| prodId | prodName      |
++--------+---------------+
+| 999    | Mountain Bike |
+| 100    | Road Bike     |
++--------+---------------+
+pod "mysql-client" deleted
+
+Load Balancing Testing
+To test load balancing across followers, run the following command.
+
+kubectl -n workshop run mysql-client-loop --image=mysql:5.7 -i -t --rm --restart=Never --\
+   bash -ic "while sleep 1; do mysql -h mysql-read -e 'SELECT @@server_id,NOW()'; done"
+
+Each MySQL instance is assigned a unique identifier, and it can be retrieved using @@server_id. It will print the server id serving the request and the timestamp.
+
++-------------+---------------------+
+| @@server_id | NOW()               |
++-------------+---------------------+
+|         101 | 2021-02-21 19:17:52 |
++-------------+---------------------+
++-------------+---------------------+
+| @@server_id | NOW()               |
++-------------+---------------------+
+|         101 | 2021-02-21 19:17:53 |
++-------------+---------------------+
++-------------+---------------------+
+| @@server_id | NOW()               |
++-------------+---------------------+
+|         100 | 2021-02-21 19:17:54 |
++-------------+---------------------+
++-------------+---------------------+
+| @@server_id | NOW()               |
++-------------+---------------------+
+|         100 | 2021-02-21 19:17:55 |
++-------------+---------------------+
+
+Leave this open in a separate window while you test failure in the next section.

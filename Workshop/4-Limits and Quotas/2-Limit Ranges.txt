@@ -1,0 +1,194 @@
+Limit Ranges
+Pre-requisite
+Make sure you have completed the chapter Using Helm to ensure you have deployed the Product Catalog Application.
+
+Configure Default CPU Requests and Limits
+
+In order to have Quotas properly working, we need to define a default value for Requests and Limits. Let's first take a look on the existing objects in the workshop Namespace.
+kubectl -n workshop get pods,deployments
+
+Example output:
+NAME READY STATUS RESTARTS AGE
+pod/frontend-68c798cf44-vqc25 1/1 Running 0 100m
+pod/prodcatalog-5c47947fb7-qxzph 1/1 Running 0 29h
+pod/proddetail-69d4b5fbdc-5qn7k 1/1 Running 0 29h
+
+NAME READY UP-TO-DATE AVAILABLE AGE
+deployment.apps/frontend 1/1 1 1 29h
+deployment.apps/prodcatalog 1/1 1 1 29h
+deployment.apps/proddetail 1/1 1 1 29h
+
+Let's check also if there are any existing Resource Requests and Limits for the frontend application.
+kubectl -n workshop get deployment frontend -o yaml | yq '.spec.template.spec.containers[].resources'
+
+Example output:
+{}
+
+kubectl -n workshop get pod -l app=frontend -o yaml | yq '.items.[].spec.containers[].resources'
+
+Example output:
+{}
+There are no resources requests or limits configuration for the Deployment nor the Pods.
+
+So let's create a LimitRange.
+cat <<EOF | kubectl apply -f - 
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: cpu-limit-range
+  namespace: workshop
+spec:
+  limits:
+  - default:
+      cpu: 1
+    defaultRequest:
+      cpu: 0.5
+    type: Container
+EOF
+
+And rollout the frontend deployment.
+kubectl -n workshop rollout restart deploy frontend
+kubectl -n workshop rollout status deploy frontend
+
+Now check the frontend Deployment and Pod specs again.
+kubectl -n workshop get deployment frontend -o yaml | yq '.spec.template.spec.containers[].resources'
+
+Example output:
+{}
+
+kubectl -n workshop get pod -l app=frontend -o yaml | yq '.items.[].spec.containers[].resources'
+
+Example output:
+limits:
+  cpu: "1"
+requests:
+  cpu: 500m
+
+As we can see, even with no resource definition in the Deployment level, the LimitRange applied a default resource definition for the newly created Pod. This will work the same way if you specify just one of limits or requests in the Deployment or Pod configuration, the LimitRange object will apply the defined value for the non-declared specification.
+
+Another use case for LimitRanges is to be restrictive against over-provisioned, to understand that, we'll create another LimitRange but using memory as our target resource.
+cat <<EOF | kubectl apply -f - 
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: memory-constraint
+  namespace: workshop
+spec:
+  limits:
+  - default:
+      memory: 256Mi
+    defaultRequest:
+      memory: 256Mi
+    max:
+      memory: 256Mi
+    min:
+      memory: 128Mi
+    type: Container
+EOF
+
+If we check the proddetail Deployment, we can validate that it already has a resource spec declared.
+
+kubectl -n workshop get deployment proddetail -o yaml | yq '.spec.template.spec.containers[].resources'
+
+Example output:
+limits:
+  cpu: 500m
+  memory: 512Mi
+requests:
+  cpu: 200m
+  memory: 512Mi
+Since the respective Pod is already running, the LimitRange was not applied, let's force a rollout for the proddetail application, and check its status.
+
+kubectl -n workshop rollout restart deploy proddetail
+kubectl -n workshop rollout status deploy proddetail                                      
+
+Example output:
+
+Waiting for deployment "proddetail" rollout to finish: 0 out of 1 new replicas have been updated...
+The status command stopped, waiting for the rollout to finish, because it didn't happen successfully. You can hit ctrl+c.
+
+If we take a look in the events of the workshop namespace, there will be an Error.
+
+kubectl -n workshop get events --sort-by='.metadata.creationTimestamp'
+
+Example output:
+...
+2m52s       Warning   FailedCreate        replicaset/proddetail-5c547849c9   Error creating: pods "proddetail-5c547849c9-ns7bw" is forbidden: maximum memory usage per Container is 256Mi, but limit is 512Mi
+...
+We can also check that in the proddetail Deployment status:
+
+kubectl -n workshop get deployment proddetail -o yaml | yq '.status'
+
+Example output:
+conditions:
+  - lastTransitionTime: "2023-02-20T23:56:46Z"
+    lastUpdateTime: "2023-02-20T23:56:46Z"
+    message: 'pods "proddetail-7c968f5bd9-n7w5l" is forbidden: maximum memory usage per Container is 256Mi, but limit is 512Mi'
+    reason: FailedCreate
+    status: "True"
+    type: ReplicaFailure
+  - lastTransitionTime: "2023-02-20T23:57:51Z"
+    lastUpdateTime: "2023-02-20T23:57:51Z"
+    message: Deployment does not have minimum availability.
+    reason: MinimumReplicasUnavailable
+    status: "False"
+    type: Available
+  - lastTransitionTime: "2023-02-20T23:44:47Z"
+    lastUpdateTime: "2023-02-20T23:57:51Z"
+    message: ReplicaSet "proddetail-7c968f5bd9" is progressing.
+    reason: ReplicaSetUpdated
+    status: "True"
+    type: Progressing
+observedGeneration: 4
+unavailableReplicas: 2
+
+The LimitRange didn't allowed the Pod to be created, since its memory request and limit are higher than the allowed by the max flag of the LimitRange.
+
+Considering that proddetail application memory request is valid, let's increase the value for the LimitRange.
+cat <<EOF | kubectl apply -f - 
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: memory-constraint
+  namespace: workshop
+spec:
+  limits:
+  - default:
+      memory: 256Mi
+    defaultRequest:
+      memory: 256Mi
+    max:
+      memory: 512Mi
+    min:
+      memory: 128Mi
+    type: Container
+EOF
+
+Check the rollout status for the proddetail Deployment.
+
+kubectl -n workshop rollout restart deploy proddetail
+kubectl -n workshop rollout status deploy proddetail
+
+Example output:
+Waiting for deployment "proddetail" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "proddetail" rollout to finish: 1 old replicas are pending termination...
+deployment "proddetail" successfully rolled out
+
+For our last test here, rollout the frontend application again, and check if the memory requests and limits were also applied to the new Pod.
+
+kubectl -n workshop rollout restart deploy frontend; kubectl -n workshop rollout status deploy frontend
+
+Example output:
+Waiting for deployment "frontend" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "frontend" rollout to finish: 1 old replicas are pending termination...
+deployment "frontend" successfully rolled out
+
+kubectl -n workshop get pod -l app=frontend -o yaml | yq '.items.[].spec.containers[].resources'     
+
+Example output:
+limits:
+  cpu: "1"
+  memory: 256Mi
+requests:
+  cpu: 500m
+  memory: 256Mi

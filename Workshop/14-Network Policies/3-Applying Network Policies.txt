@@ -1,0 +1,214 @@
+Ingress Network Policies
+To see how Kubernetes Network Policy works, we will be using the communication between the frontend and the prodcatalog applications in the workshop Namespace.
+
+Validate if all the Pods and Services are running correctly.
+kubectl -n workshop get svc,pod
+
+Example output:
+NAME                        CLUSTER-IP    EXTERNAL-IP   PORT(S)    AGENAME                  TYPE           CLUSTER-IP       EXTERNAL-IP                                                              PORT(S)        AGE
+service/frontend      LoadBalancer   172.20.184.136   aeab2147c80bd4f9aa0d148af29e65c8-825928004.us-west-2.elb.amazonaws.com   80:30711/TCP   5m54s
+service/prodcatalog   ClusterIP      172.20.67.51     <none>                                                                   5000/TCP       5m54s
+service/proddetail    ClusterIP      172.20.198.130   <none>                                                                   3000/TCP       5m54s
+
+NAME                               READY   STATUS    RESTARTS   AGE
+pod/frontend-5ffb7ffc69-kfrfx      1/1     Running   0          5m54s
+pod/prodcatalog-5c47947fb7-qxzph   1/1     Running   0          5m54s
+pod/proddetail-69d4b5fbdc-5qn7k    1/1     Running   0          5m54s
+Test the service access. You should be able to access the prodcatalog service from the frontend Pod.
+
+To do that, access the frontend Pod.
+kubectl -n workshop exec -ti $(kubectl get pods -n workshop -l app=frontend -o name) -- bash
+
+In your shell, run the following command:
+curl prodcatalog:5000
+
+Example output:
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Product Catalog</title>
+...
+
+Exit the Pod with ctrl+d, or exit command.
+
+Now, let's limit ingress access to the prodcatalog service.
+
+To limit the access to the prodcatalog service so that only Pods with the label access=true can query it, create a NetworkPolicy object as follows:
+
+cat <<EOF | kubectl apply -f - 
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: access-prodcatalog
+  namespace: workshop
+spec:
+  podSelector:
+    matchLabels:
+      app: prodcatalog
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          access: "true"
+EOF
+
+This NetworkPolicy includes a podSelector which selects the grouping of Pods to which the policy applies. You can see this policy selects Pods with the label app=prodcatalog. An empty podSelector selects all pods in the Namespace.
+
+Test access to the service when access label is not defined
+
+When you attempt to access the prodcatalog Service from a Pod without the correct labels, the request times out:
+kubectl -n workshop exec -ti $(kubectl get pods -n workshop -l app=frontend -o name) -- bash
+
+In your shell, run the command:
+curl prodcatalog:5000 --connect-timeout 10
+
+Example output:
+curl: (7) Failed to connect to prodcatalog port 5000: Connection timed out
+Exit the Pod with ctrl+d, or exit command.
+
+Now, we will define the correct access label in the Pod and test again.
+kubectl -n workshop label $(kubectl get pods -n workshop -l app=frontend -o name) access=true
+
+We are labeling a running frontend Pod, if we trigger a rollout for the frontend Deployment, the Pod will loose this label, unless we label the Deployment template.
+
+To validate the access, access the frontend Pod again, and run the curl command.
+kubectl -n workshop exec -ti $(kubectl get pods -n workshop -l app=frontend -o name) -- bash
+
+curl prodcatalog:5000
+
+Example output: 
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Product Catalog</title>
+...
+
+Exit the Pod with ctrl+d, or exit command.
+
+Engress Network Policies
+Now let's create a NetworkPolicy rule that will restrict the access from the frontend application to allow connections only to the prodcatalog application, and restricting the access to other Pods in the workshop Namespace.
+
+Since we already know that the frontend application already has access to the prodcatalog Service, let's validate it and test the communication to the proddetail Service as well.
+
+Now let's create a NetworkPolicy rule that will restrict the access from the frontend application to allow connections only to the prodcatalog application, and restricting the access to other Pods in the workshop Namespace.
+
+Since we already know that the frontend application already has access to the prodcatalog Service, let's validate it and test the communication to the proddetail Service as well.
+
+kubectl get svc -n workshop
+
+Example output:
+NAME          TYPE           CLUSTER-IP       EXTERNAL-IP                                                              PORT(S)        AGE
+frontend      LoadBalancer   172.20.184.136   aeab2147c80bd4f9aa0d148af29e65c8-825928004.us-west-2.elb.amazonaws.com   80:30711/TCP   128m
+prodcatalog   ClusterIP      172.20.67.51     <none>                                                                   5000/TCP       128m
+proddetail    ClusterIP      172.20.198.130   <none>                                                                   3000/TCP       128m
+
+kubectl -n workshop exec -ti $(kubectl get pods -n workshop -l app=frontend -o name) -- bash
+
+In your shell, run the following commands:
+curl prodcatalog:5000
+
+Example output: 
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Product Catalog</title>
+...
+
+curl proddetail:3000
+
+Example output:
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>Cannot GET /</pre>
+</body>
+</html>
+
+In despite of the error, the connection happened, and this is enough for our tests.
+
+Exit the Pod with ctrl+d, or exit command.
+
+So now let's create the NetworkPolicy with the egress rule matching the app=frontend label. With this rule, the frontend Pod will be allowed only to communicate with applications matching the label app=prodcatalog.
+
+cat <<EOF | kubectl apply -f - 
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: access-frontend
+  namespace: workshop
+spec:
+  podSelector:
+    matchLabels:
+      app: frontend
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: prodcatalog
+EOF
+
+Let's test again the communication from the frontend Pod to the prodcatalog and proddetail applications.
+kubectl -n workshop exec -ti $(kubectl get pods -n workshop -l app=frontend -o name) -- bash
+
+In your shell, run the following commands:
+curl prodcatalog:5000 -v
+
+The access didn't work, right? It returned a fail to resolve the prodcatalog host.
+Example output:
+Rebuilt URL to: prodcatalog:5000/
+Could not resolve host: prodcatalog
+Closing connection 0
+curl: (6) Could not resolve host: prodcatalog
+That's because we restricted ALL Egress communication from the frontend application, to match just destinations that match the label app=prodcatalog. This means also that the DNS resolver cannot be reached, because it doesn't have this label.
+
+Exit the Pod with ctrl+d, or exit command.
+
+So let's add another Egress rule to our NetworkPolicy, so it will be able to resolve DNS names. Knowing that our DNS resolver is core-dns and it resides in the kube-system Namespace together with other required cluster wide services, let's allow the communication with the entire kube-system Namespace.
+
+cat <<EOF | kubectl apply -f - 
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: access-frontend
+  namespace: workshop
+spec:
+  podSelector:
+    matchLabels:
+      app: frontend
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: prodcatalog
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+EOF
+
+Now let's do one final test access from the frontend Pod to the prodcatalog and proddetail Services.
+kubectl -n workshop exec -ti $(kubectl get pods -n workshop -l app=frontend -o name) -- bash
+
+curl prodcatalog:5000
+
+Example output:
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Product Catalog</title>
+...
+
+curl proddetail:3000 --connect-timeout 10
+
+Exanple output:
+curl: (7) Failed to connect to proddetail port 3000: Connection timed out
+Because of the matchLabels rule, just the access to the prodcatalog Service should work.
+
+Exit the Pod with ctrl+d, or exit command.

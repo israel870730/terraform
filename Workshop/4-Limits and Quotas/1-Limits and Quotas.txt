@@ -1,0 +1,40 @@
+Limits and Quotas
+Introduction
+In this setion, we'll be touching how to manage compute and cluster resources in Kubernetes.
+
+When you have more than one team working in the same cluster with limited resources, a concern about one team consuming more resources than others is raised. Also by default all containers run with boundless resources meaning that one single Pod can consume all the compute resources existing in a node. To overcome this challenge, we can can restrict consumption of compute resources (CPU, memory, storage) and the creation of cluster resources (Pods, Deployments, Secrets, ConfigMaps) in a given Namespace using ResourceQuotas. However a Pod still can consume as much CPU and memory as is allowed by the ResourceQuotas monopolizing all available resources in the Namespace, and to address that we need also to adopt the usage of LimitRanges policies together with ResourceQuotas.
+
+Limit Ranges
+A LimitRange is a policy to constrain the resource allocations (limits and requests) that you can apply for each object, such as Pods or PersistentStorageClaims in a Namespace.
+
+According to the Kubernetes documentation:
+
+A LimitRange provides constraints that can:
+
+Enforce minimum and maximum compute resources usage per Pod or Container in a Namespace.
+Enforce minimum and maximum storage request per PersistentVolumeClaim (https://kubernetes.io/docs/concepts/storage/persistent-volumes/#persistentvolumeclaims) in a Namespace.
+Enforce a ratio between request and limit for a resource in a Namespace.
+Set default request/limit for compute resources in a Namespace and automatically inject them to Containers at runtime.
+LimitRanges work like this:
+
+The administrator creates a LimitRange in a Namespace.
+Users create (or try to create) objects in that Namespace, such as Pods or PersistentVolumeClaims.
+First, the LimitRange admission controller applies default request and limit values for all Pods (and their containers) that do not set compute resource requirements.
+Second, the LimitRange tracks usage to ensure it does not exceed resource minimum, maximum and ratio defined in any LimitRange present in the Namespace.
+If you attempt to create or update an object (Pod or PersistentVolumeClaim) that violates a LimitRange constraint, your request to the API server will fail with an HTTP status code 403 Forbidden and a message explaining the constraint that has been violated.
+If you add a LimitRange in a Namespace that applies to compute-related resources such as cpu and memory, you must specify requests or limits for those values. Otherwise, the system may reject Pod creation.
+LimitRange validations occur only at Pod admission stage, not on running Pods. If you add or modify a LimitRange, the Pods that already exist in that Namespace continue unchanged.
+If two or more LimitRange objects exist in the Namespace, it is not deterministic which default value will be applied.
+
+Resource Quotas
+When ResourceQuota is enabled for compute resources like cpu and memory, users must specify requests or limits for those, otherwise, the quota system may reject Pod creation. To force default Requests or Limits for Pods, we will use LimitRanges.
+
+Resource quotas work like this:
+
+Different teams work in different Namespaces.
+The administrator creates one ResourceQuota for each Namespace.
+Users create resources (pods, services, etc.) in the Namespace, and the quota system tracks usage to ensure it does not exceed hard resource limits defined in a ResourceQuota.
+If creating or updating a resource violates a quota constraint, the request will fail with HTTP status code 403 FORBIDDEN with a message explaining the constraint that would have been violated.
+
+In our scenario we are using Limits and Quotas based on compute resources and cluster objects, for a complete list of supported types of quotas and limits, please check the Kubernetes documentation (https://kubernetes.io/docs/concepts/policy/).
+

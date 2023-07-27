@@ -1,0 +1,56 @@
+Pre-requisite
+
+Make sure you have completed the chapter Using Helm to ensure you have deployed the Product Catalog Application.
+Make sure you have completed the Observability chapter, it is required to watch the Container Insights metrics of Pod.
+You have to install eks-node-viewer  for visualizing dynamic node usage within a cluster.
+
+go install github.com/awslabs/eks-node-viewer/cmd/eks-node-viewer@latest
+sudo mv -v ~/go/bin/eks-node-viewer /usr/local/bin
+
+This downloading and installing eks-node-viewer may take few minutes.
+Run the eks-node-viewer
+
+eks-node-viewer
+
+This shows the existing 3 nodes of your EKS cluster which is provisioned during setup of the lab.
+
+In this Chapter, we will show patterns for scaling your worker nodes and applications deployments automatically.
+
+Automatic scaling in K8s comes in below forms:
+
+Horizontal Pod Autoscaler (HPA)
+A Horizontal Pod Autoscaler (HPA) scales pods in a deployment or replica set. It is implemented as a K8s API resource and a controller. The resource determines the behavior of the controller. The Controller Manager queries the resource utilization against the metrics specified in each HorizontalPodAutoscaler definition. The controller periodically adjusts the number of replicas in a replication controller or deployment to the target specified by the user by observing metrics such as average CPU utilization, average memory utilization or any other custom metric. It obtains the metrics from either the resource metrics API (for per-pod resource metrics), or the custom metrics API (for all other metrics).
+
+The Kubernetes Metrics Server is a scalable and efficient aggregator of resource usage data in your cluster. It provides container metrics that are required by the Horizontal Pod Autoscaler. The metrics server is not deployed by default in Amazon EKS clusters.
+
+Cluster Autoscaler (CA)
+Cluster Autoscaler is a component that automatically adjusts the size of a Kubernetes Cluster so that all pods have a place to run without unneeded nodes. The Cluster Autoscaler is a great tool to ensure that the underlying cluster infrastructure is elastic, scalable, and can meet the changing demands of workloads.
+
+The Kubernetes Cluster Autoscaler automatically adjusts the size of a Kubernetes cluster when one of the following conditions is true:
+
+There are pods that fail to run in the cluster due to insufficient resources.
+
+There are nodes in the cluster that are underutilized for an extended period of time and their pods can be placed on other existing nodes.
+
+Before you deploy the Cluster Autoscaler, make sure that you're familiar with how Kubernetes concepts interface with AWS features. The following terms are used throughout this topic:
+
+Kubernetes Cluster Autoscaler  – A core component of the Kubernetes control plane that makes scheduling and scaling decisions.
+
+AWS Cloud provider implementation  – An extension of the Kubernetes Cluster Autoscaler that implements the decisions of the Kubernetes Cluster Autoscaler by communicating with AWS products and services such as Amazon EC2.
+
+Node groups  – A Kubernetes abstraction for a group of nodes within a cluster. Node groups aren't a true Kubernetes resource, but they're found as an abstraction in the Cluster Autoscaler, Cluster API, and other components. Nodes that are found within a single node group might share several common properties such as labels and taints. However, they can still consist of more than one Availability Zone or instance type.
+
+Amazon EC2 Auto Scaling groups  – A feature of AWS that's used by the Cluster Autoscaler. Auto Scaling groups are suitable for a large number of use cases. Amazon EC2 Auto Scaling groups are configured to launch instances that automatically join their Kubernetes cluster. They also apply labels and taints to their corresponding node resource in the Kubernetes API.
+
+On AWS, Cluster Autoscaler utilizes Amazon EC2 Auto Scaling Groups (ASGs) to manage node groups. Cluster Autoscaler typically runs as a Deployment in your cluster. The Cluster Autoscaler scales worker nodes within any specified Auto Scaling group and runs as a deployment in your cluster.
+
+Karpenter
+In this section we will setup Karpenter . Karpenter is an open-source autoscaling and node provisioning project built for Kubernetes for improved efficiency and reduced costs. Karpenter is designed to provide the right compute resources to match your applications' needs in seconds by observing the aggregate resource requests of unschedulable pods and makes decisions to launch and terminate nodes to minimize scheduling latency.
+
+Karpenter works by:
+
+Watching for pods that the Kubernetes scheduler has marked as unschedulable
+Evaluating scheduling constraints (resource requests, nodeselectors, affinities, tolerations, and topology spread constraints) requested by the pods
+Provisioning nodes that meet the requirements of the pods
+Scheduling the pods to run on the new nodes
+Removing the nodes when the nodes are no longer needed

@@ -1,0 +1,16 @@
+Delete the AWS Load Balancer Controller
+Uninstall the AWS Load Balancer Controller.
+
+helm uninstall aws-load-balancer-controller -n kube-system
+
+Delete the service account created for AWS Load Balancer Controller.
+eksctl delete iamserviceaccount \
+    --cluster ${LAB_CLUSTER_ID} \
+    --name aws-load-balancer-controller \
+    --namespace kube-system \
+    --wait
+
+Delete the IAM Policy created for the AWS Load Balancer Controller.
+
+aws iam delete-policy \
+    --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicy

@@ -1,0 +1,35 @@
+Welcome to the Amazon EKS Immersion Workshop!
+
+Overview
+The intent of this workshop is to use real-world services and demonstrate features of EKS showcasing end-to-end functionality of each feature from application development perspective.
+
+This workshop is the outcome of experience we had from past Immersion workshops that we did for our customers at AWS. The topics in this workshop is catered towards commonly asked EKS features by customers, and will help you to quickly get-started with EKS, using real world example of microservices deployment.
+
+The workshop uses consistent and same microservice application called "Product Catalog" in all the chapters to keep the continuity for the audience and to give an end-to-end application development and deployment experience. As this workshop is built with real-world microservices it will also give the auidence a complete perspective of application development and deployment lifecyle in terms of setup, deployment and observability.
+
+Background in EKS, Kubernetes, Docker, and container workflows are not required, but they are recommended.
+
+How long does each chapter in this workshop take?
+As part of this workshop we will cover the following topics. Below timing includes on understanding each step and going through them.
+
+Chapters	Time taken to complete	Dependency
+Workshop setup	5 mins	
+About Workshop Applicaton	5 mins	
+Using Helm	10 mins	
+Role-based access control (RBAC)	10 mins	
+Limits and Quotas	10 mins	
+Pod Security Standards	20 mins	
+IAM Roles for Service Account (IRSA)	10 mins	
+Healthcheck	10 mins	
+Observability	25 mins	
+Monitoring with ADOT, AMP and AMG	20 mins	
+Autoscaling (Horizontal Pod Autoscaler-HPA, Cluster Autoscaler-CA, Karpenter)	45 mins	Observability 
+Persistence storage using EFS	25 mins	
+Statefulset using EBS	30 mins	
+Kubernetes secrets and AWS Secrets Manager	30 mins	EBS CSI Driver install 
+Services and Ingress	45 mins	
+Network Policies	30 mins	
+Cost Management with Kubecost	15 mins	
+Continuous Delivery with Argo CD	45 mins	
+Fargate	20 mins	
+Real Time Threat Detection with Falco	15 mins

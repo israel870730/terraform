@@ -1,0 +1,73 @@
+aws_region: &region "us-east-1"
+region: *region
+
+######
+# VPC
+######
+
+#vpc_name: &vpc_name "vrf-prod-vpc"
+
+#vpc_tags:
+#  Name: *vpc_name
+
+#enable_dns_hostnames: true
+#enable_nat_gateway: true
+
+######
+# EFS
+######
+#efs_name: "vrf-prod-deploy"
+
+######
+# EKS
+######
+
+cluster_name: "poc-deploy-20221228"
+cluster_version: "1.23"
+vpc_id: "vpc-056de1d789556b4f2"
+tags:  
+  Environment: "POC"
+  Terraform: "true"
+
+#eks_managed_node_groups es para cuando llamo al modulo que se hizo para la POC, con una version mas actulizada del modulo de EKS 
+#eks_managed_node_groups : 
+#  poc-deploy:
+#    desired_size: 2
+#    min_size: 2
+#    max_size: 5
+#    instance_types: ["t3.micro"]
+#    capacity_type: "ON_DEMAND"
+#    name: poc-deploy
+
+worker_groups:
+  - asg_desired_capacity: 1
+    asg_max_size: 1
+    asg_min_size: 1
+    instance_type: m5.2xlarge
+    name: spot-1-
+    root_volume_size: '300'
+    #spot_price: '0.9999'
+    #ami_id: "ami-08024bd0a9ae5cb5a"
+    
+
+aws_auth_roles : 
+  - rolearn  : "arn:aws:iam::114712064551:user/israel.garcia@verifone.com"
+    username : "israel.garcia@verifone.com"
+    groups   :
+      - "system:masters"
+  
+aws_auth_users : 
+  - userarn  : "arn:aws:iam::114712064551:user/israel.garcia@verifone.com"
+    username : "israel.garcia@verifone.com"
+    groups   :
+      - "system:masters"
+  
+  - userarn  : "arn:aws:iam::114712064551:user/Murali_M1@VERIFONE.com"
+    username : "Murali_M1@VERIFONE.com"
+    groups   : 
+      - "system:masters"
+  
+  - userarn  : "arn:aws:iam::114712064551:user/Ajai.sam@verifone.com"
+    username : "Ajai.sam@verifone.com"
+    groups   : 
+      - "system:masters"

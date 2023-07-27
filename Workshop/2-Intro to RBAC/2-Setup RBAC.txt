@@ -1,0 +1,173 @@
+Create User
+For the sake of simplicity, in this chapter, we will save credentials to a file to make it easy to toggle back and forth between users. Never do this in production or with credentials that have privileged access; It is not a security best practice to store credentials on the filesystem.
+From within the Cloud9 terminal, create a new user called rbac-user, and generate/save credentials for it:
+
+aws iam create-user --user-name rbac-user
+aws iam create-access-key --user-name rbac-user | tee /tmp/create_output.json
+
+By running the previous step, you should get a response similar to:
+
+{
+    "AccessKey": {
+        "UserName": "rbac-user",
+        "Status": "Active",
+        "CreateDate": "2019-07-17T15:37:27Z",
+        "SecretAccessKey": < AWS Secret Access Key > ,
+        "AccessKeyId": < AWS Access Key >
+    }
+}
+To make it easy to switch back and forth between the admin user you created the cluster with, and this new rbac-user, run the following command to create a script that when sourced, sets the active user to be rbac-user:
+
+cat << EoF > rbacuser_creds.sh
+export AWS_SECRET_ACCESS_KEY=$(jq -r .AccessKey.SecretAccessKey /tmp/create_output.json)
+export AWS_ACCESS_KEY_ID=$(jq -r .AccessKey.AccessKeyId /tmp/create_output.json)
+EoF
+
+Map User to K8S
+Next, we'll define a k8s user called rbac-user, and map to its IAM user counterpart.
+
+eksctl create iamidentitymapping \
+  --cluster eksworkshop-eksctl \
+  --arn arn:aws:iam::${ACCOUNT_ID}:user/rbac-user \
+  --username rbac-user
+
+
+To verify everything populated and was created correctly, run the following:
+
+kubectl describe cm aws-auth -n kube-system 
+
+And the output should reflect that rolearn and userarn populated, similar to:
+
+Name:         aws-auth
+Namespace:    kube-system
+Labels:       <none>
+Annotations:  <none>
+
+Data
+====
+...
+...
+mapUsers:
+----
+- userarn: arn:aws:iam::123456789:user/rbac-user
+  username: rbac-user
+Test the User
+Up until now, as the cluster operator, you've been accessing the cluster as the admin user. Let's now see what happens when we access the cluster as the newly created rbac-user.
+
+Issue the following command to source the rbac-user's AWS IAM user environmental variables:
+
+. rbacuser_creds.sh
+
+By running the above command, you've now set AWS environmental variables which should override the default admin user or role. To verify we've overrode the default user settings, run the following command:
+
+aws sts get-caller-identity
+
+You should see something similar to below, where we're now making API calls as rbac-user:
+
+
+{
+    "Account": <AWS Account ID>,
+    "UserId": <AWS User ID>,
+    "Arn": "arn\:aws\:iam::<AWS Account ID>\:user/rbac-user"
+}
+
+Now that we're making calls in the context of the rbac-user, lets quickly make a request to get all pods:
+
+kubectl get pods -n workshop
+
+You should get a response back similar to:
+
+No resources found.  Error from server (Forbidden): pods is forbidden: User "rbac-user" cannot list resource "pods" in API group "" in the namespace "workshop"
+
+We already created the rbac-user, so why did we get that error?
+
+Just creating the user doesn't give that user access to any resources in the cluster. In order to achieve that, we'll need to define a role, and then bind the user to that role. We'll do that next.
+
+Create Role and Role Binding
+As mentioned earlier, we have our new user rbac-user, but its not yet bound to any roles. In order to do that, we'll need to switch back to our default admin user.
+
+Run the following to unset the environmental variables that define us as rbac-user:
+
+unset AWS_SECRET_ACCESS_KEY
+unset AWS_ACCESS_KEY_ID
+
+To verify we're the admin user again, and no longer rbac-user, issue the following command:
+aws sts get-caller-identity
+
+The output should show the user is no longer rbac-user:
+
+{
+    "Account": <AWS Account ID>,
+    "UserId": <AWS User ID>,
+    "Arn": "arn:aws:iam::<your AWS account ID>:assumed-role/eksworkshop-admin/i-123456789"
+}
+
+Now that we're the admin user again, we'll create a role called pod-reader that provides list, get, and watch access for pods and deployments, but only for the workshop namespace. 
+Run the following to create this role:
+
+cat << EoF > rbacuser-role.yaml
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  namespace: workshop
+  name: pod-reader
+rules:
+- apiGroups: [""] # "" indicates the core API group
+  resources: ["pods"]
+  verbs: ["list","get","watch"]
+- apiGroups: ["extensions","apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "watch"]
+EoF
+
+We have the user, we have the role, and now we're bind them together with a RoleBinding resource. Run the following to create this RoleBinding:
+
+cat << EoF > rbacuser-role-binding.yaml
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: read-pods
+  namespace: workshop
+subjects:
+- kind: User
+  name: rbac-user
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: pod-reader
+  apiGroup: rbac.authorization.k8s.io
+EoF
+
+Next, we apply the Role, and RoleBindings we created:
+
+kubectl apply -f rbacuser-role.yaml
+kubectl apply -f rbacuser-role-binding.yaml
+
+Verify the Role and Role Binding
+Now that the user, Role, and RoleBinding are defined, lets switch back to rbac-user, and test.
+
+To switch back to rbac-user, issue the following command that sources the rbac-user env vars, and verifies they've taken:
+. rbacuser_creds.sh; aws sts get-caller-identity
+
+You should see output reflecting that you are logged in as rbac-user.
+
+As rbac-user, issue the following to get pods in the rbac namespace:
+kubectl get pods -n workshop
+
+The output should be similar to:
+
+NAME                          READY   STATUS    RESTARTS   AGE
+frontend-657d785b6-bpp4x      1/1     Running   0          14h
+prodcatalog-95df774d4-46cfv   1/1     Running   0          7d14h
+proddetail-745889bdf7-fdrcg   1/1     Running   0          62m
+
+Try running the same command again, but outside of the workshop namespace:
+
+kubectl get pods -n kube-system
+
+You should get an error similar to:
+
+No resources found.
+Error from server (Forbidden): pods is forbidden: User "rbac-user" cannot list resource "pods" in API group "" in the namespace "kube-system"
+
+Because the role you are bound to does not give you access to any namespace other than workshop.

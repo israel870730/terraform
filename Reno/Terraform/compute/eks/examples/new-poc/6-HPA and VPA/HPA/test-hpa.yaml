@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-hpa
+spec:
+  selector:
+    matchLabels:
+      run: test-hpa
+  replicas: 5
+  template:
+    metadata:
+      labels:
+        run: test-hpa
+    spec:
+      containers:
+      - name: test-hpa
+        image: busybox
+        command: ["/bin/sh"]
+        args: ["-c", "while sleep 0.01; do wget -q -O- http://php-apache; done"]
+      restartPolicy: Always

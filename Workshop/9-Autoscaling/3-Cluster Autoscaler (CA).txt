@@ -1,0 +1,278 @@
+Cluster Autoscaler (CA)
+Pre-requisite
+Make sure you have followed the pre-requisite from chapter Autoscaling on helm application deployment and eks-node-viewer.
+If you have completed HPA lab, ensure to complete clean up
+
+Also we'll be removing Observability setup in this workshop. This is to ensure the scaling down of nodes works consistently using Cluster Autoscaler. Here are Observability clean-up commands.
+
+Observability clean up
+export CLUSTER_NAME=$(eksctl get clusters -o json | jq -r '.[0].Name')
+
+kubectl -n amazon-cloudwatch delete daemonsets cloudwatch-agent fluent-bit
+eksctl delete iamserviceaccount --cluster ${CLUSTER_NAME}  --name cloudwatch-agent  --namespace amazon-cloudwatch
+eksctl delete iamserviceaccount --cluster ${CLUSTER_NAME}  --name fluent-bit  --namespace amazon-cloudwatch
+
+cd ~/environment/eks-app-mesh-polyglot-demo/workshop/
+kubectl delete -f prometheus-eks.yaml
+eksctl delete iamserviceaccount --cluster ${CLUSTER_NAME} --name cwagent-prometheus  --namespace amazon-cloudwatch
+
+cd ~/environment/eks-app-mesh-polyglot-demo/workshop/
+kubectl delete -f xray-eks.yaml
+eksctl delete iamserviceaccount --cluster ${CLUSTER_NAME}  --name xray-daemon  --namespace default
+
+Configure the ASG
+First let's check how many nodes there are in our cluster.
+kubectl get nodes
+
+NAME                                           STATUS   ROLES    AGE   VERSION
+ip-192-168-5-xxx.us-west-2.compute.internal    Ready    <none>   9d    v1.24.7-eks-49a6c0
+ip-192-168-53-yyy.us-west-2.compute.internal   Ready    <none>   9d    v1.24.7-eks-49a6c0
+ip-192-168-91-zzz.us-west-2.compute.internal   Ready    <none>   9d    v1.24.7-eks-49a6c0
+
+You configure the size of your Auto Scaling group by setting the minimum, maximum, and desired capacity.
+aws autoscaling \
+    describe-auto-scaling-groups \
+    --query "AutoScalingGroups[? Tags[? (Key=='eks:cluster-name') && Value=='eksworkshop-eksctl']].[AutoScalingGroupName, MinSize, MaxSize,DesiredCapacity]" \
+    --output table
+
+-------------------------------------------------------------
+|                 DescribeAutoScalingGroups                 |
++-------------------------------------------+----+----+-----+
+|  eks-1eb9b447-f3c1-0456-af77-af0bbd65bc9f |  2 |  3 |  3  |
++-------------------------------------------+----+----+-----+
+
+Now, increase the maximum capacity to 4 instances.
+# we need the ASG name
+export ASG_NAME=$(aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[? Tags[? (Key=='eks:cluster-name') && Value=='eksworkshop-eksctl']].AutoScalingGroupName" --output text)
+
+# increase min capacity to 3 and max capacity up to 4
+aws autoscaling \
+    update-auto-scaling-group \
+    --auto-scaling-group-name ${ASG_NAME} \
+    --min-size 3 \
+    --desired-capacity 3 \
+    --max-size 4
+
+# Check new values
+aws autoscaling \
+    describe-auto-scaling-groups \
+    --query "AutoScalingGroups[? Tags[? (Key=='eks:cluster-name') && Value=='eksworkshop-eksctl']].[AutoScalingGroupName, MinSize, MaxSize,DesiredCapacity]" \
+    --output table
+
+-------------------------------------------------------------
+|                 DescribeAutoScalingGroups                 |
++-------------------------------------------+----+----+-----+
+|  eks-fcbe16cb-0c12-aea6-ef6b-0b76326e8d7f |  3 |  4 |  3  |
++-------------------------------------------+----+----+-----+
+IAM roles for service accounts
+Click here if you are not familiar with IAM Roles for Service Accounts (IRSA).
+With IAM roles for service accounts on Amazon EKS clusters, you can associate an IAM role with a Kubernetes service account . This service account can then provide AWS permissions to the containers in any pod that uses that service account. With this feature, you no longer need to provide extended permissions to the node IAM role so that pods on that node can call AWS APIs.
+
+Create an IAM policy for your service account that will allow your CA pod to interact with the Auto Scaling Groups.
+mkdir ~/environment/cluster-autoscaler
+
+cat <<EoF > ~/environment/cluster-autoscaler/k8s-asg-policy.json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Action": [
+                "autoscaling:DescribeAutoScalingGroups",
+                "autoscaling:DescribeAutoScalingInstances",
+                "autoscaling:DescribeLaunchConfigurations",
+                "autoscaling:DescribeTags",
+                "autoscaling:SetDesiredCapacity",
+                "autoscaling:TerminateInstanceInAutoScalingGroup",
+                "ec2:DescribeLaunchTemplateVersions",
+                "ec2:DescribeInstanceTypes"
+            ],
+            "Resource": "*",
+            "Effect": "Allow"
+        }
+    ]
+}
+EoF
+
+aws iam create-policy   \
+  --policy-name k8s-asg-policy \
+  --policy-document file://~/environment/cluster-autoscaler/k8s-asg-policy.json
+
+{
+    "Policy": {
+        "PolicyName": "k8s-asg-policy",
+        "PolicyId": "ANPA35V2EJPPHAXT5PEKE",
+        "Arn": "arn:aws:iam::XXXX:policy/k8s-asg-policy",
+        "Path": "/",
+        "DefaultVersionId": "v1",
+        "AttachmentCount": 0,
+        "PermissionsBoundaryUsageCount": 0,
+        "IsAttachable": true,
+        "CreateDate": "2022-09-29T23:00:29+00:00",
+        "UpdateDate": "2022-09-29T23:00:29+00:00"
+    }
+}
+You can skip this step if you have already enabled OIDC Provider. The IAM OIDC Provider is not enabled by default, you can use the following command to enable it.
+eksctl utils associate-iam-oidc-provider \
+    --region ${AWS_REGION} \
+    --cluster eksworkshop-eksctl \
+    --approve
+
+Finally, create an IAM role for the cluster-autoscaler Service Account in the kube-system namespace.
+eksctl create iamserviceaccount \
+    --name cluster-autoscaler \
+    --namespace kube-system \
+    --cluster eksworkshop-eksctl \
+    --attach-policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/k8s-asg-policy" \
+    --approve \
+    --override-existing-serviceaccounts
+
+Make sure your service account with the ARN of the IAM role is annotated.
+kubectl -n kube-system describe sa cluster-autoscaler
+
+Output:
+
+Name:                cluster-autoscaler
+Namespace:           kube-system
+Labels:              app.kubernetes.io/managed-by=eksctl
+Annotations:         eks.amazonaws.com/role-arn: arn:aws:iam::537337826623:role/eksctl-eksworkshop-eksctl-addon-iamserviceac-Role1-MUI8W64M0777
+Image pull secrets:  <none>
+Mountable secrets:   <none>
+Tokens:              <none>
+Events:              <none>
+
+Deploy the Cluster Autoscaler (CA)
+
+Deploy the Cluster Autoscaler to your cluster with the following command.
+
+cd /home/ec2-user/environment/eks-app-mesh-polyglot-demo/workshop
+kubectl apply -f cluster-autoscaler.yaml
+
+To prevent CA from removing nodes where its own pod is running, we will add the cluster-autoscaler.kubernetes.io/safe-to-evict annotation to its deployment with the following command:
+kubectl patch deployment cluster-autoscaler \
+  -n kube-system \
+  -p '{"spec":{"template":{"metadata":{"annotations":{"cluster-autoscaler.kubernetes.io/safe-to-evict": "false"}}}}}'
+
+For viewing the Cluster Autoscaler logs, use the command below.
+kubectl -n kube-system logs -f deployment.apps/cluster-autoscaler
+
+For Cluster-autoscaler to discover nodes in our EKS cluster, the Auto Scaling Groups need to have certain tags assigned to it.
+
+To check the tags assigned to the ASG, navigate to EC2 -> Auto Scaling -> Auto Scaling Groups in AWS console and click on the Auto Scaling Group. You should see the tags assigned to the ASG as shown below
+
+Cluster Autoscaler checks whether the two tags (shown as circled in the above image) are assigned following values. This is needed for the cluster autoscaler to discover nodes.
+
+k8s.io/cluster-autoscaler/eksworkshop-eksctl=owned
+k8s.io/cluster-autoscaler/enabled=true
+Scale our ReplicaSet
+
+We are now ready to scale our cluster. Our proddetail service has just one replica so far.
+kubectl get deployment/proddetail -n workshop
+
+NAME         READY   UP-TO-DATE   AVAILABLE   AGE
+proddetail   1/1     1            1           9d
+
+Then, scale the proddetail replicas to 30 manually
+kubectl scale --replicas=30 deployment/proddetail -n workshop
+
+Output is as below:
+
+deployment.apps/proddetail scaled
+Open new terminal and execute the command below. Some pods will be in the Pending state, which triggers the cluster-autoscaler to scale out the EC2 fleet.
+
+Autoscaling depends on the current capacity of the node to schedule new pods. If you see all the pods have been scheduled and none are Pending, then you had enough capacity to schedule all 30 replicas. Try to scale more replicas.
+kubectl get pods -l app=proddetail -n workshop -o wide --watch
+
+You should find some of the pods in the Pending state
+
+proddetail-745889bdf7-s9fxk   1/1     Running   0          8m10s   192.168.86.50   ip-192-168-91-zzz.us-west-2.compute.internal   <none>           <none>
+proddetail-745889bdf7-5vw7m   0/1     Pending   0          0s      <none>          <none>                                         <none>           <none>
+proddetail-745889bdf7-5vw7m   0/1     Pending   0          0s      <none>          ip-192-168-5-xxx.us-west-2.compute.internal    <none>           <none>
+proddetail-745889bdf7-fl8jv   0/1     Pending   0          0s      <none>          <none>                                         <none>           <none>
+proddetail-745889bdf7-tpmwm   0/1     Pending   0          0s      <none>          <none>                                         <none>           <none>
+proddetail-745889bdf7-5vw7m   0/1     ContainerCreating   0          0s      <none>          ip-192-168-5-xxx.us-west-2.compute.internal    <none>           <none>
+proddetail-745889bdf7-fl8jv   0/1     Pending             0          0s      <none>          ip-192-168-53-yyy.us-west-2.compute.internal    <none>           <none>
+proddetail-745889bdf7-tpmwm   0/1     Pending             0          0s      <none>          ip-192-168-5-xxx.us-west-2.compute.internal    <none>           <none>
+proddetail-745889bdf7-fl8jv   0/1     ContainerCreating   0          0s      <none>          ip-192-168-53-yyy.us-west-2.compute.internal    <none>           <none>
+proddetail-745889bdf7-tpmwm   0/1     ContainerCreating   0          0s      <none>          ip-192-168-5-xxx.us-west-2.compute.internal    <none>           <none>
+proddetail-745889bdf7-nhm8t   0/1     Pending             0          0s      <none>          <none>                                         <none>           <none>
+proddetail-745889bdf7-872nz   0/1     Pending             0          0s      <none>          <none>    
+
+You can verify that all the proddetail replicas are deployed:
+kubectl get deployment/proddetail -n workshop
+
+NAME         READY   UP-TO-DATE   AVAILABLE   AGE
+proddetail   30/30   30           30          14m
+You can also check that there are 4 nodes in the cluster now:
+
+kubectl get nodes
+
+NAME                                           STATUS   ROLES    AGE    VERSION
+ip-192-168-2-xxx.us-west-2.compute.internal    Ready    <none>   3d6h   v1.24.7-eks-fb459a0
+ip-192-168-6-yyy.us-west-2.compute.internal    Ready    <none>   111s   v1.24.7-eks-fb459a0
+ip-192-168-60-zzz.us-west-2.compute.internal   Ready    <none>   3d6h   v1.24.7-eks-fb459a0
+ip-192-168-81-mmm.us-west-2.compute.internal   Ready    <none>   3d6h   v1.24.7-eks-fb459a0
+You can also see the new node coming up in the eks-node-viewer.
+
+eks-node-viewer
+
+Scale down ReplicaSet for cleanup
+
+Let's scale the proddetail replica back down to 1:
+kubectl scale --replicas=1 deployment/proddetail -n workshop
+
+Output is as below:
+
+deployment.apps/proddetail scaled
+We need to wait for few minutes at this point for cluster autoscaler to remove the extra node from the cluster.
+
+It may take 3-5 minutes to scale down the cluster.
+You can also check the cluster-autoscaler logs while it's scaling down the cluster.
+
+kubectl -n kube-system logs -f deployment/cluster-autoscaler
+
+I0130 20:43:14.503807       1 static_autoscaler.go:492] Calculating unneeded nodes
+I0130 20:43:14.503847       1 legacy.go:334] Node ip-192-168-179-46.ec2.internal - cpu utilization 0.116580
+I0130 20:43:14.503874       1 legacy.go:334] Node ip-192-168-132-113.ec2.internal - cpu utilization 0.064767
+I0130 20:43:14.503893       1 legacy.go:334] Node ip-192-168-125-2.ec2.internal - cpu utilization 0.168394
+I0130 20:43:14.503905       1 legacy.go:395] Scale-down calculation: ignoring 1 nodes unremovable in the last 5m0s
+I0130 20:43:14.503947       1 cluster.go:160] ip-192-168-179-46.ec2.internal for removal
+I0130 20:43:44.652882       1 cluster.go:251] Pod workshop/proddetail-dc968597-z9mxx can be moved to ip-192-168-179-46.ec2.internal
+I0130 20:43:44.652895       1 cluster.go:182] node ip-192-168-125-2.ec2.internal may be removed
+I0130 20:47:55.693584       1 legacy.go:395] Scale-down calculation: ignoring 1 nodes unremovable in the last 5m0s
+You should see only three nodes:
+
+kubectl get nodes
+
+NAME                                           STATUS   ROLES    AGE   VERSION
+ip-192-168-5-xxx.us-west-2.compute.internal    Ready    <none>   9d    v1.24.7-eks-49a6c0
+ip-192-168-53-yyy.us-west-2.compute.internal   Ready    <none>   9d    v1.24.7-eks-49a6c0
+ip-192-168-91-zzz.us-west-2.compute.internal   Ready    <none>   9d    v1.24.7-eks-49a6c0
+And you should see the pods have been scaled down along with cluster :
+
+eks-node-viewer
+
+Clean up
+
+cd /home/ec2-user/environment/eks-app-mesh-polyglot-demo/workshop
+kubectl delete -f cluster-autoscaler.yaml
+
+eksctl delete iamserviceaccount \
+  --name cluster-autoscaler \
+  --namespace kube-system \
+  --cluster eksworkshop-eksctl \
+  --wait
+
+aws iam delete-policy \
+  --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/k8s-asg-policy
+
+cd ~/environment
+rm -rf ~/environment/cluster-autoscaler
+
+aws autoscaling \
+    update-auto-scaling-group \
+    --auto-scaling-group-name ${ASG_NAME} \
+    --min-size 3 \
+    --desired-capacity 3 \
+    --max-size 3
+
+unset ASG_NAME

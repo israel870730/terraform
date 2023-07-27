@@ -1,0 +1,25 @@
+ExternalDNS
+1- Create IAM policy for ExternalDNS 
+  aws iam create-policy --policy-name "AllowExternalDNSUpdates" --policy-document file://policy.json --profile bp_test
+2- Obtener el arn de la policy creada 
+  aws iam list-policies --query 'Policies[?PolicyName==`AllowExternalDNSUpdates`].Arn' --output text --profile bp_test
+3- Create IAM Role, k8s Service Account & Associate IAM Policy
+  eksctl create iamserviceaccount --name external-dns --namespace externaldns --cluster test-bamboo-billingcore --attach-policy-arn arn:aws:iam::217866098974:policy/AllowExternalDNSUpdates --approve --override-existing-serviceaccounts --profile bp_test
+4- Verify the Service Account and Verify IAM Role & IAM Policy
+  kubectl get sa external-dns -o yaml
+5- Update External DNS Kubernetes manifest with the "eks.amazonaws.com/role-arn" obtain in step 4 
+  Example: eks.amazonaws.com/role-arn: arn:aws:iam::217866098974:role/eksctl-test-bamboo-billingcore-addon-iamserv-Role1-2UBH5RVG8QHX
+6- Deploy the manifest of ExternalDNS
+  # Deploy external DNS
+    kubectl apply -f Deploy-ExternalDNS.yml
+  # Verify Deployment by checking logs
+    kubectl logs -f $(kubectl get po | egrep -o 'external-dns[A-Za-z0-9-]+')
+  # List pods (external-dns pod should be in running state)
+    kubectl get pods 
+
+eksctl get iamserviceaccount --cluster test-bamboo-billingcore --profile bp_test
+
+Take from: https://github.com/stacksimplify/aws-eks-kubernetes-masterclass/tree/master/08-ELB-Application-LoadBalancers/08-06-ALB-Ingress-ExternalDNS/08-06-01-Deploy-ExternalDNS-on-EKS
+
+
+eksctl create iamserviceaccount --name external-dns --cluster eks-new-poc --attach-policy-arn arn:aws:iam::114712064551:policy/AllowExternalDNSUpdates --approve

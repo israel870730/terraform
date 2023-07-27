@@ -1,0 +1,2 @@
+https://aws.amazon.com/es/premiumsupport/knowledge-center/eks-access-kubernetes-services/
+https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/aws/deploy.yaml

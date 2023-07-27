@@ -1,0 +1,96 @@
+Restricted Pod Security Standard
+Configuring Restricted Profile
+Finally we can take a look at the Restricted profile, which is the most heavily restricted policy following current Pod hardening best practices.
+
+Add labels to the workshop Namespace to enable all PSA modes for the Restricted PSS profile:
+
+helm upgrade --reuse-values -f workshop/helm-chart/security/values-psa-pss-restricted-ns.yaml workshop workshop/helm-chart/
+
+Example WARNING output:
+W0218 01:43:00.250990   13974 warnings.go:70] existing pods in namespace "workshop" violate the new PodSecurity enforce level "restricted:latest"
+W0218 01:43:00.251013   13974 warnings.go:70] frontend-794bf57bdd-ck9j8: unrestricted capabilities, runAsNonRoot != true, seccompProfile
+W0218 01:43:00.251022   13974 warnings.go:70] prodcatalog-6f66c677f7-z77pk (and 1 other pod): allowPrivilegeEscalation != false, unrestricted capabilities, runAsNonRoot != true, seccompProfile
+
+Similar to the Baseline profile we are getting warnings that the frontend Deployment is violating the Restricted profile.
+
+kubectl -n workshop delete pods -l app=frontend
+
+Again, the PODs aren't recreated.
+kubectl -n workshop get pods -l app=frontend
+
+Example output:
+No resources found in workshop namespace.
+
+The above output indicates that PSA did not allow creation of Pods in the workshop Namespace, because the Pod security configuration violates Restricted PSS profile. This behaviour is same as what we saw earlier in the previous section.
+
+In the case of the Restricted profile we actually need to proactively lock down some of the security configuration to meet the profile. Let's add some security controls to the Pod configuration to make it compliant with the Privileged PSS profile configured for the workshop Namespace:
+
+helm upgrade --reuse-values  -f workshop/helm-chart/security/values-psa-pss-restricted.yaml workshop workshop/helm-chart/
+
+Now, Run the below commands to check the securityContext of the frontend Deployment, and if PSA allowed the creation of the Pod with the changes.
+
+kubectl -n workshop get deployment frontend -o yaml | yq '.spec.template.spec'
+
+Example output:
+containers:
+  - env:
+      - name: BASE_URL
+        value: http://prodcatalog.workshop:5000/products/
+      - name: AWS_XRAY_DAEMON_ADDRESS
+        value: xray-service.default:2000
+    image: public.ecr.aws/u2g6w7p2/eks-workshop-demo/frontend_node:2.0
+    imagePullPolicy: Always
+    livenessProbe:
+      failureThreshold: 3
+      httpGet:
+        path: /ping
+        port: 9000
+        scheme: HTTP
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      successThreshold: 1
+      timeoutSeconds: 1
+    name: frontend
+    ports:
+      - containerPort: 9000
+        name: http
+        protocol: TCP
+    readinessProbe:
+      failureThreshold: 3
+      httpGet:
+        path: /ping
+        port: 9000
+        scheme: HTTP
+      initialDelaySeconds: 5
+      periodSeconds: 3
+      successThreshold: 1
+      timeoutSeconds: 1
+    resources: {}
+  securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      readOnlyRootFilesystem: false
+      runAsNonRoot: true
+      runAsUser: 1000
+      seccompProfile:
+        type: RuntimeDefault
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+dnsPolicy: ClusterFirst
+restartPolicy: Always
+schedulerName: default-scheduler
+securityContext: {}
+terminationGracePeriodSeconds: 30
+
+kubectl -n workshop get pods -l app=frontend                                                                                                      
+
+Example output:
+NAME                       READY   STATUS    RESTARTS   AGE
+frontend-95cc76678-b2qvz   1/1     Running   0          18s
+
+The above output indicates that PSA allowed since Pod security configuration confirms to the Restricted PSS profile.
+
+Note that the above security permissions are not the comprehensive list of controls allowed under Restricted PSS profile. 
+For detailed security controls allowed/disallowed under each PSS profile, refer to the Kubernetes documentation (https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted).

@@ -1,0 +1,4 @@
+Remove Network Policy objects and uninstall Calico
+
+kubectl -n workshop delete networkpolicy --all
+helm uninstall calico

@@ -1,0 +1,61 @@
+Unhealthy container
+MySQL container uses readiness probe by running mysql -h 127.0.0.1 -e 'SELECT 1' on the server to make sure MySQL server is still active. 
+Open a new terminal and simulate MySQL as being unresponsive by following command.
+
+kubectl -n workshop exec mysql-1 -c mysql -- sh -c 'echo "#!/bin/sh" >> /mysql;echo "exit 1" >> /mysql;chmod +x /mysql;cp /usr/bin/mysql /usr/bin/mysql.off;cp /mysql /usr/bin/mysql;'
+
+This command renames the /usr/bin/mysql command so that readiness probe can't find it. During the next health check, the pod should report one of it's containers is not healthy. This can be verified by following command.
+
+kubectl -n workshop get pod mysql-1
+
+NAME      READY     STATUS    RESTARTS   AGE
+mysql-1   1/2       Running   0          12m
+mysql-read load balancer detects failures and takes action by not sending traffic to the failed container, @@server_id 101.
+
+You can check this by the loop running in the separate window from previous section. The loop shows the following output.
+
+kubectl -n workshop run mysql-client-loop --image=mysql:5.7 -i -t --rm --restart=Never --\
+   bash -ic "while sleep 1; do mysql -h mysql-read -e 'SELECT @@server_id,NOW()'; done"
+
++-------------+---------------------+
+| @@server_id | NOW()               |
++-------------+---------------------+
+|         100 | 2020-01-25 17:32:19 |
++-------------+---------------------+
++-------------+---------------------+
+| @@server_id | NOW()               |
++-------------+---------------------+
+|         100 | 2020-01-25 17:32:20 |
++-------------+---------------------+
++-------------+---------------------+
+| @@server_id | NOW()               |
++-------------+---------------------+
+|         100 | 2020-01-25 17:32:21 |
++-------------+---------------------+
+
+Simulate Pod Failure
+To simulate a failed pod, delete mysql-1 pod by following command.
+
+kubectl -n workshop delete pod mysql-1
+
+Output:
+pod "mysql-1" deleted
+
+StatefulSet controller recognizes failed pod and creates a new one to maintain the number of replicas with the same name and link to the same PersistentVolumeClaim.
+
+kubectl -n workshop get pod mysql-1 -w
+
+NAME      READY   STATUS        RESTARTS   AGE
+mysql-1   2/2     Terminating   0          15m
+mysql-1   0/2     Terminating   0          16m
+mysql-1   0/2     Terminating   0          16m
+mysql-1   0/2     Terminating   0          16m
+mysql-1   0/2     Pending       0          0s
+mysql-1   0/2     Pending       0          0s
+mysql-1   0/2     Init:0/2      0          0s
+mysql-1   0/2     Init:1/2      0          11s
+mysql-1   0/2     PodInitializing   0          12s
+mysql-1   1/2     Running           0          13s
+mysql-1   2/2     Running           0          18s
+
+Press Ctrl+C to stop watching.

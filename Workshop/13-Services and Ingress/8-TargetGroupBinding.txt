@@ -1,0 +1,212 @@
+In this section we will explore a useful feature of AWS Load Balancer Controller called TargetGroupBinding. As shown in the previous sections AWS Elastic Load Balancer uses a configuration element called target group to route the traffic to the respective endpoints. For instance, in the previous section we defined two Ingress rules, each pointing out to a different backend service. Each of those rules reflected as individual target groups on AWS Application Load Balancer.
+
+Target group is a native construct of AWS Elastic Load Balancer service. AWS Load Balancer Controller uses TargetGroupBinding to support the functionality of Kubernetes service type of LoadBalancer or Ingress. As we have seen in the previous sections, whenever a Kubernetes service type of LoadBalancer or a Kubernetes Ingress is created, AWS Load Balancer Controller provisions a Network or Application Load Balancer in the VPC and configures a Target Group, which corresponds to that Kubernetes service or ingress, on that load balancer. There is one more thing happening in the background and that is AWS Load Balancer Controller also creates a TargetGroupBinding as a Kubernetes Custom Resource  on the Kubernetes side. This is basically how TargetGroupBinding is used. However there is another use case where the TargetGroupBinding allows you to accomplish.
+
+Your AWS VPC environment may already have an existing Network or Application Load Balancer and your workflows may require you to create, maintain and manage your load balancers without/outside of Kubernetes control. TargetGroupBinding feature enables you tto expose your Kubernetes applications to the external clients through an already existing target group on the AWS Elastic Load Balancer, which was provisioned through AWS console / AWS CLI / CloudFormation etc. What this gives you is the flexibility and independence so that you do not need to use a native method such as Kubernetes service type of Load Balancer or Kubernetes Ingress to expose your application(s) to external clients. You can instead associate an internal Kubernetes service type of ClusterIP with an existing target group on an AWS Network or Application Load Balancer directly. This approach basically introduces decoupling between Kubernetes services/ingress and the AWS Network or Application load balancer used in the environment.
+
+Another use case of TargetGroupBinding is for blue/green deployments where you have separate Kubernetes clusters and a service in each cluster can be mapped to a different target group on the AWS Load Balancer.
+
+In this section we we will demonstrate the simplest scenario using TargetGroupBinding to give an overview of how it works.
+
+1. Deploy Application Load Balancer
+We will use CloudFormation template which basically is the Infrastructure as Code file that will deploy an application load balancer in the Amazon VPC. This is the load balancer which is being managed and maintained outside of Kubernetes, imagine a completely separate team is responsible for this load balancer.
+
+Download the CloudFormation template from this GitHub link  to your local disk and investigate the template.
+
+In summary, the CloudFormation template will provision an application load balancer, a listener on that load balancer and also a security group which will be associated with the load balancer. A target group will also be provisioned and used in the load balancing rule on the listener. Additionally, a security group rule will be provisioned to be added to the worker nodes’ security group, which will be explained in more detail later.
+
+Navigate to CloudFormation service in AWS Console. Click Create stack and choose With new resources (standard) on the right hand side.
+
+In the next screen, click on Upload a template file at the bottom right and then click on Choose file button on the bottom left, choose the file you downloaded previously and then click on Next.
+
+On the next screen, give the stack a friendly name such as TargetGroupBindingStack and then choose the security group that the worker nodes are associated with; the security group name should be like eks-cluster-sg-eksworkshop-eksctl-xxxxxxxx. Then choose all the subnets where you see the ...SubnetPublic..., load balancer will be provisioned on these subnets. Finally choose the vpc where the load balancer will be deployed in and then click Next. A sample screenshot is shown below.
+
+For the names that you would see in dropdowns have a look at the following screenshots.
+
+Dropdown for the Security Groups
+
+Dropdown for the Subnets
+
+Dropdown for the VPCs
+
+Click Next on the next screen and then click Create Stack on the following screen.
+
+You should see a screen similar to the one shown below. Events tab shows which resources are being created. You can use the refresh button on the right hand side to keep an eye on the up to data state of process and resources being created.
+
+It may take a few minutes until you see the CloudFormation stack status as CREATE_COMPLETE which means all the resources are provisioned.
+
+Next click on Outputs tab, shown below.
+
+The first value shown here is the DNS name of the Application Load Balancer provisioned by CloudFormation. The second value is the ARN of the target group that is provisioned alongside the application load balancer. We will use these two values in the upcoming steps. You can copy them to a text file or keep this screen as a separate tab in the browser.
+
+2. Review Application Load Balancer
+Navigate to EC2 console and verify that the a new application load balancer is provisioned. (shown below)
+
+Let’ s check the listener configuration.
+
+Click on the `eksworkshoptg target group and then select the same target group in the next screen. (shown below)
+
+As you can see in above screenshot, the target type for this group is configured as IP there are no targets in this target group yet.
+
+So far we provisioned an application load balancer using a CloudFormation template. This load balancer is managed and maintained outside of Kubernetes.
+
+3. Deploy test application and service
+Let’ s create a test deployment and service using the manifest below.
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+cat <<EOF | kubectl apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testapp
+  namespace: workshop
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: testapp
+  template:
+    metadata:
+      labels:
+        app: testapp
+    spec:
+      containers:
+      - image: public.ecr.aws/u2g6w7p2/eks-workshop-demo/simplewebserver:1.0
+        name: simplewebserver
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: testapp
+  namespace: workshop
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80 
+      name: http 
+  selector:
+    app: testapp
+EOF
+
+Output
+
+deployment.apps/testapp created
+service/testapp created
+Let’ s verify the state of the deployment.
+
+1
+kubectl get deployment testapp -n workshop
+
+Output
+
+NAME      READY   UP-TO-DATE   AVAILABLE   AGE
+testapp   3/3     3            3           13s
+Check the pod IPs of this deployment.
+
+1
+kubectl get pods -n workshop -l=app=testapp -o wide
+
+Output
+
+NAME                       READY   STATUS    RESTARTS   AGE   IP               NODE                                          NOMINATED NODE   READINESS GATES
+testapp-6964f9f666-fcqhg   1/1     Running   0          1h    192.168.43.18    ip-192-168-32-13.eu-west-1.compute.internal   <none>           <none>
+testapp-6964f9f666-nmpd2   1/1     Running   0          1h    192.168.88.149   ip-192-168-93-31.eu-west-1.compute.internal   <none>           <none>
+testapp-6964f9f666-rgg79   1/1     Running   0          7h    192.168.4.203    ip-192-168-22-88.eu-west-1.compute.internal   <none>           <none>
+Describe the service.
+
+1
+kubectl describe svc testapp -n workshop
+
+Output
+
+Name:              testapp
+Namespace:         workshop
+Labels:            <none>
+Annotations:       <none>
+Selector:          app=testapp
+Type:              ClusterIP
+IP:                10.100.32.198
+Port:              http  80/TCP
+TargetPort:        80/TCP
+Endpoints:         192.168.4.203:80,192.168.43.18:80,192.168.88.149:80
+Session Affinity:  None
+Events:            <none>
+As shown above there are three endpoints which matches the pod IPs shown previously.
+
+4. Create TargetGroupBinding
+We are now going to create a TargetGroupBinding resource in Kubernetes which will be associated with the eksworkshoptg target group on the application load balancer. In order to accomplish this we are going to use the following manifest. Note that you need to replace the targetgroupARN parameter in this manifest with the AWS ARN of the target group, which you must have copied back in Deploy Application Load Balancer section.
+cat <<EOF | kubectl apply -f -
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: testapptgb
+  namespace: workshop
+spec:
+  serviceRef:
+    name: testapp #route traffic to the testapp
+    port: 80
+  targetGroupARN: arn:aws:elasticloadbalancing:eu-west-1:702463714165:targetgroup/eksworkshoptg/fc3409bc5e613beb #you need to replace this with your target group arn that you copied in the previous step
+EOF
+
+Output
+
+targetgroupbinding.elbv2.k8s.aws/testapptgb created
+After you created the TargetGroupBinding in Kubernetes, in a few seconds you should see the updated list of the the Targets for the target group. Please see below.
+
+All the endpoints of the testapp service got automatically added to the target group, thanks to the TargetGroupBinding feature. Whenever the pods change for the Kubernetes service called testapp`, the targets for the target group will automatically be updated by AWS Load Balancer Controller.
+
+Notice that we did not use any Kubernetes service type LoadBalancer or Kubernetes Ingress in this implementation. We instead associated an existing target group (eksworkshoptg) and decoupled the AWS Load Balancer from being provisioned and consumed by Kubernetes directly.
+
+Let’s verify that we can access the testapp. Navigate to the Load Balancer DNS Name which you must have copied back in Deploy Application Load Balancer section. An example is shown below.
+
+An important thing to highlight here is that this time, the traffic from the Application Load Balancer to the pods are allowed by the additional security group rule which is added to the worker nodes’ security group as part of the Cloudformation template we used in the beginning. Previously with Ingress, it was the AWS Load Balancer Controller which automatically updated the security groups of the Kubernetes Nodes to allow inbound traffic from the Application Load Balancer. In this scenario though that same specific step needs to be done either as part of the CloudFormation stack or any other automation tool or manually by updating the security group of the nodes.
+
+This concludes the TargetGroupBinding section.
+
+5. Cleanup
+Delete the targetgroupbinding, deployment and service.
+1
+2
+3
+kubectl delete targetgroupbinding testapptgb -n workshop
+kubectl delete deployment testapp -n workshop
+kubectl delete service testapp -n workshop
+
+Output
+
+targetgroupbinding.elbv2.k8s.aws "testapptgb" deleted
+deployment.apps "testapp" deleted
+service "testapp" deleted
+Delete the Cloudformation stack by navigating to CloudFormation console. Select the stack named as TargetGroupBindingStack and then click the Delete button on the top right side.

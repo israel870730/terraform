@@ -1,0 +1,133 @@
+Configuring Baseline Profile
+What if we want to restrict the permissions that a Pod can request? For example the privileged permissions we provided to the frontend Pod in the previous section can be dangerous, 
+allowing an attacker access to the hosts resources outside of the container. The Baseline PSS is a minimally restrictive policy which prevents known privilege escalations. 
+Lets add labels to the workshop Namespace to enable it: `` Apply the below changes to add labels to the workshop namespace:
+
+helm upgrade --reuse-values -f workshop/helm-chart/security/values-psa-pss-baseline-ns.yaml workshop workshop/helm-chart/
+
+Example WARNING output:
+W0218 01:21:50.971301    4700 warnings.go:70] existing pods in namespace "workshop" violate the new PodSecurity enforce level "baseline:latest"
+W0218 01:21:50.971328    4700 warnings.go:70] frontend-5d6d45b4b8-2228b: privileged
+
+Validate the baseline PSS was applied to the workshop Namespace.
+kubectl describe ns workshop
+
+Example output:
+Name:         workshop
+Labels:       app.kubernetes.io/managed-by=Helm
+              kubernetes.io/metadata.name=workshop
+              pod-security.kubernetes.io/audit=baseline
+              pod-security.kubernetes.io/enforce=baseline
+              pod-security.kubernetes.io/warn=baseline
+Annotations:  meta.helm.sh/release-name: workshop
+              meta.helm.sh/release-namespace: default
+Status:       Active
+
+No resource quota.
+
+No LimitRange resource.
+
+You can see above that we've already been given a warning that Pods in the workshop Namespace violates the Baseline PSS, which is provided by the Namespace label pod-security.kubernetes.io/warn.
+
+Now recycle the Pods in the workshop Deployment:
+kubectl -n workshop delete pods -l app=frontend
+
+Lets check if the Pods are running:
+kubectl -n workshop get pods -l app=frontend
+
+Example output:
+No resources found in workshop namespace.
+
+No Pods are running! This was caused by the Namespace label pod-security.kubernetes.io/enforce which prevents Pods from being created if the respective Pod specs violate the configured PSS profile.
+
+However non-Pod Kubernetes objects that create Pods, such as Deployments, won’t be prevented from being applied to the cluster, even if the Pod spec therein violates the applied PSS profile. In this case the Deployment is applied while the Pods are prevented from being applied.
+
+Run the below command to inspect the Deployment resource to find the status condition:
+kubectl -n workshop get deployment frontend -o yaml | yq '.status'
+
+Example output:
+conditions:
+  - lastTransitionTime: "2023-02-07T20:08:45Z"
+    lastUpdateTime: "2023-02-08T01:23:58Z"
+    message: ReplicaSet "frontend-6dd5db84f8" has successfully progressed.
+    reason: NewReplicaSetAvailable
+    status: "True"
+    type: Progressing
+  - lastTransitionTime: "2023-02-08T01:25:33Z"
+    lastUpdateTime: "2023-02-08T01:25:33Z"
+    message: Deployment does not have minimum availability.
+    reason: MinimumReplicasUnavailable
+    status: "False"
+    type: Available
+  - lastTransitionTime: "2023-02-08T01:25:33Z"
+    lastUpdateTime: "2023-02-08T01:25:33Z"
+    message: 'pods "frontend-6dd5db84f8-p6zdl" is forbidden: violates PodSecurity "baseline:latest": privileged (container "frontend" must not set securityContext.privileged=true)'
+    reason: FailedCreate
+    status: "True"
+    type: ReplicaFailure
+observedGeneration: 5
+unavailableReplicas: 1
+
+Now we'll fix the frontend Deployment, so it will run by removing the privileged and the runAsUser:0 flags.
+helm upgrade --reuse-values -f workshop/helm-chart/security/values-psa-pss-baseline.yaml workshop workshop/helm-chart/
+
+This time we didn't receive a warning so check if the Pods are running:
+kubectl -n workshop get pods -l app=frontend                                                                                                      
+
+Example output:
+NAME                        READY   STATUS    RESTARTS   AGE
+frontend-5cb7f65856-bhxkj   1/1     Running   0          9s
+
+Validate the container securityContext configuration, and the execution as NON-privileged user.
+kubectl -n workshop get deployment frontend -o yaml | yq '.spec.template.spec'
+
+Example output:
+containers:
+  - env:
+      - name: BASE_URL
+        value: http://prodcatalog.workshop:5000/products/
+      - name: AWS_XRAY_DAEMON_ADDRESS
+        value: xray-service.default:2000
+    image: public.ecr.aws/u2g6w7p2/eks-workshop-demo/frontend_node:2.0
+    imagePullPolicy: Always
+    livenessProbe:
+      failureThreshold: 3
+      httpGet:
+        path: /ping
+        port: 9000
+        scheme: HTTP
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      successThreshold: 1
+      timeoutSeconds: 1
+    name: frontend
+    ports:
+      - containerPort: 9000
+        name: http
+        protocol: TCP
+    readinessProbe:
+      failureThreshold: 3
+      httpGet:
+        path: /ping
+        port: 9000
+        scheme: HTTP
+      initialDelaySeconds: 5
+      periodSeconds: 3
+      successThreshold: 1
+      timeoutSeconds: 1
+    resources: {}
+    securityContext:
+      allowPrivilegeEscalation: false
+      runAsUser: 1000
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+dnsPolicy: ClusterFirst
+restartPolicy: Always
+schedulerName: default-scheduler
+securityContext: {}
+terminationGracePeriodSeconds: 30
+
+kubectl -n workshop exec -ti $(kubectl get pods -n workshop -l app=frontend -o name) -- whoami   
+
+Example output:
+node

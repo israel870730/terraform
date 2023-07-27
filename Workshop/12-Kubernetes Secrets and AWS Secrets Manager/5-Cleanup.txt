@@ -1,0 +1,70 @@
+Restore ProductCatalog Application
+
+cd ~/environment/eks-app-mesh-polyglot-demo
+helm upgrade --reuse-values -f ~/environment/eks-app-mesh-polyglot-demo/workshop/helm-chart/values.yaml workshop workshop/helm-chart/
+
+Delete MYSQL StatefulSet
+
+# Delete MYSQL StatefulSet
+kubectl delete \
+  -f ${HOME}/environment/mysql_statefulset/mysql-services.yaml \
+  -f ${HOME}/environment/mysql_statefulset/mysql-configmap.yaml \
+  -f ~/environment/eks-app-mesh-polyglot-demo/workshop/mysql-statefulset-with-secret.yaml
+
+# Delete persistent volume claims created by MYSQL StatefulSet
+kubectl -n workshop delete pvc data-mysql-0
+kubectl -n workshop delete pvc data-mysql-1
+
+cd ${HOME}/environment
+rm -rf ${HOME}/environment/mysql_statefulset
+
+EBS CSI Driver Cleanup
+
+export EBS_CSI_POLICY_NAME="Amazon_EBS_CSI_Driver"
+export EBS_CSI_POLICY_ARN=$(aws --region ${AWS_REGION} iam list-policies --query 'Policies[?PolicyName==`'${EBS_CSI_POLICY_NAME}'`].Arn' --output text)
+
+# Uninstall the aws-ebs-csi-driver
+helm -n kube-system uninstall aws-ebs-csi-driver
+
+# Delete the service account
+eksctl delete iamserviceaccount \
+  --cluster eksworkshop-eksctl \
+  --namespace kube-system \
+  --name ebs-csi-controller-irsa \
+  --wait
+
+# Delete the IAM Amazon_EBS_CSI_Driver policy
+aws iam delete-policy \
+  --region ${AWS_REGION} \
+  --policy-arn ${EBS_CSI_POLICY_ARN}
+
+Secrets Store Driver Cleanup
+# Delete IAM Service account for product catalog service
+eksctl delete iamserviceaccount \
+  --cluster eksworkshop-eksctl \
+  --namespace workshop \
+  --name catalog-deployment-sa \
+  --wait
+
+
+# Delect IAM policy for secrets manager secret
+aws iam delete-policy \
+  --policy-arn ${IAM_POLICY_ARN_SECRET}
+
+# Delete Secrets Manager Secret
+aws secretsmanager delete-secret \
+    --secret-id ${SECRET_ARN} \
+    --force-delete-without-recovery
+
+# Delete SecretProviderClass custom resource
+kubectl delete -f ${HOME}/environment/eks-app-mesh-polyglot-demo/catalog-deployment-spc-k8s-secrets.yaml
+
+# Delete the kubernetes secret created by the provider
+kubectl delete secrets mysql-secret-from-secrets-manager -n workshop
+
+# Uninstall secrets store CSI driver helm chart
+helm uninstall -n kube-system csi-secrets-store
+
+# Delete ASCP
+kubectl delete -f https://raw.githubusercontent.com/aws/secrets-store-csi-driver-provider-aws/main/deployment/aws-provider-installer.yaml
+

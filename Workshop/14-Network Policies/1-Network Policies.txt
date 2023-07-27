@@ -1,0 +1,116 @@
+Introduction
+Network Security is one of the most important subjects of matter when implementing security frameworks on your Kubernetes platform or cluster. Working similarly as AWS Security Groups, 
+NetworkPolicies allows you to control traffic flow at the IP address or port level, being application-centric Network Policies allows you to specify how a Pod is allowed to communicate with other resources,
+e. g. other Pods, Services, or even external resources over the network. Network Policies apply to a connection with a Pod on one or both ends (ingress or egress), and are not relevant to other connections.
+
+According to the Kubernetes documentation(https://kubernetes.io/docs/concepts/services-networking/network-policies/) , the entities that a Pod can communicate with are identified through a combination of
+the following 3 identifiers:
+
+Other pods that are allowed (exception: a pod cannot block access to itself)
+Namespaces that are allowed
+IP blocks (exception: traffic to and from the node where a Pod is running is always allowed, regardless of the IP address of the Pod or the node)
+When defining a pod- or Namespace- based NetworkPolicy, you can use a selector to specify what traffic is allowed to and from the Pod(s) that match the selector. On the other hand, 
+when defining an IP based NetworkPolicy, we define policies based on IP ranges or CIDR blocks.
+
+Here is an example of NetworkPolicy resource.
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: example-etwork-policy
+  Namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      role: db
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 172.17.0.0/16
+            except:
+              - 172.17.1.0/24
+        - NamespaceSelector:
+            matchLabels:
+              project: database
+        - podSelector:
+            matchLabels:
+              role: frontend
+      ports:
+        - protocol: TCP
+          port: 3306
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/24
+      ports:
+        - protocol: TCP
+          port: 3306
+
+The above example NetworkPolicy:
+
+Isolates role=db pods in the default Namespace for both ingress and egress traffic (if they weren't already isolated
+Ingress rules allows connections to all Pods in the default Namespace with the label role=db on TCP port 3306 from:
+any pod in the default Namespace with the label role=frontend
+any pod in a Namespace with the label project=database
+IP addresses in the ranges 172.17.0.0–172.17.0.255 and 172.17.2.0–172.17.255.255 (ie, all of 172.17.0.0/16 except 172.17.1.0/24)
+Egress rule allows connections from any pod in the default Namespace with the label role=db to CIDR 10.0.0.0/24 on TCP port 3306.
+
+Pod Isolation
+
+There are two kinds of isolation for a Pod: isolation for egress, and isolation for ingress, which are declared independently and are both relevant for a connection. By default, Pod are not isolated for egress or ingress, meaning all outbound and inbound connections are allowed.
+
+In order to isolate a Pod, we need to declare a NetworkPolicy resource that matches both, Pod and has the Egress and/or Ingress section in its policyTypes list. When isolated, the only allowed connections from or to the Pod, need to be specified in the respective list of egress or ingress rules applied to that Pod.
+
+For a connection between Pods to be allowed, both the egress policy on the source Pod and the ingress policy on the destination Pod need to allow the connection. If either side does not allow the connection, it will not work.
+
+Also, Network policies do not conflict; they are additive, if there are multiple NetworkPolicy resources that matches the same Pod and to the same direction, the access lists are combined and the connections allowed in the given direction, are the union of all the applied policies.
+
+Behavior of to and from selectors
+There are four kinds of selectors that can be declared in the ingress from or egress to sections:
+
+podSelector: This selects particular Pods in the same Namespace as the NetworkPolicy which should be allowed as ingress sources or egress destinations. The below example policy contains a single from element allowing connections from Pods with the label role=client.
+
+ ingress:
+  - from:
+      podSelector:
+        matchLabels:
+          role: client
+
+NamespaceSelector: This selects particular Namespaces for which all Pods should be allowed as ingress sources or egress destinations. In this next example, the policy also contains a single from element, 
+but this time allowing connections from any Pod in any Namespace with the label user=alice.
+
+ ingress:
+  - from:
+    - NamespaceSelector:
+        matchLabels:
+          user: alice
+          
+If we combine these two above policies, we will have a policy with a single from element allowing connections from Pods with the label role=client that belongs to any Namespaces with the label user=alice.
+
+  ingress:
+  - from:
+    - NamespaceSelector:
+        matchLabels:
+          user: alice
+      podSelector:
+        matchLabels:
+          role: client
+
+NamespaceSelector and podSelector: When declared together in a single to/from entry, it will match particular Pods in particular Namespaces. Note that in the example below, the policy has two elements in the same from array, these allows connections from Pods in the same Namespace with the label role=client, OR from any Pod in any Namespace with the label user=alice.
+  ingress:
+  - from:
+    - NamespaceSelector:
+        matchLabels:
+          user: alice
+    - podSelector:
+        matchLabels:
+          role: client
+
+ipBlock: This selects particular IP CIDR blocks to allow as ingress sources or egress destinations. These are mainly used for IPs or ranges external to the cluster.
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 192.168.0.0/24

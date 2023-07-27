@@ -1,0 +1,188 @@
+In this section we will explore the service type of NodePort. The focus of this section will be the Frontend tier of the Product Catalog application, which is represented with frontend deployment and 
+frontend service in the workshop namespace.
+
+NodePort is used to make a Kubernetes service accessible from outside the cluster. The name comes from the fact that it basically exposes the service on a static port on all the nodes,
+which is called the NodePort. The port can be between 30000-32767. You can publish one service on a given port.
+
+NodePort is built on top of the ClusterIP. Hence all the logic and constructs mentioned earlier in the ClusterIP section apply to NodePort as well.
+
+Interesting. So how does a request get forwarded to the service ? What is the actual packet flow like ? (Click to expand)
+In the case of NodePort service, kube-proxy implements additional forwarding logic which are step 1 and step 3 explained below (step 2 is standard with ClusterIP) . 
+Since default implementation mode for kube-proxy is iptables, all this forwarding logic is based on iptables rules which are configured on the worker node by the kube-proxy.
+
+1- hen a request comes inbound to any of the worker nodes on the NodePort, the packet is processed by the iptables rules on that worker node and gets re-routed to the service virtual IP configured on the same 
+worker node.
+
+2- The packet is then processed by the iptables rules on that worker node again to choose a pod backing that service - based on random by default or session affinity if configured - and then apply destination 
+network address translation (DNAT). Basically, the destination IP address field in the IP header of the packet is changed from the service virtual IP address to the selected pod IP address.
+
+3- If the destination pod is on a different worker node (than the node which received the request) then source network address translation (SNAT) is also applied to the traffic. 
+This is needed to keep track of which node the traffic entered the Kubernetes cluster. For more details on this topic, please read the Source IP with NodePort  section in the official Kubernetes documentation.
+
+Note : If you’ d like to get more details on iptables rules in your environment then you can connect to the AWS EC2 worker nodes and use sudo iptables -t nat -L -n to examine the relevant rules.
+
+High level diagram of the architecture on service type of NodePort is shown below.
+
+1. Scale out the deployment
+
+Scale the frontend deployment to three pods.
+kubectl scale deployment frontend --replicas=3 -n workshop
+
+Output
+
+deployment.apps/frontend scaled
+Note : You can optionally verify the rollout status of the deployment using kubectl rollout status deployment frontend -n workshop
+
+Verify the number of pods in the deployment shows 3/3 in the READY column. This may take a minute or two.
+kubectl get deployments -n workshop
+
+Output
+
+NAME          READY   UP-TO-DATE   AVAILABLE   AGE
+frontend      3/3     3            3           6d19h
+prodcatalog   1/1     1            1           6d19h
+proddetail    1/1     1            1           6d19h
+
+2. Create Service
+The existing service frontend, which is configured for the Frontend tier, has a service type of LoadBalancer. In order to explain you how NodePort service is implemented, we are going to create a separate service for the Frontend tier.
+
+Create a nodeport service with the name myfrontend which groups the pods of the frontend deployment.
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: workshop
+  name: myfrontend
+  labels:
+    app: myfrontend
+spec:
+  type: NodePort # the type of service
+  ports:
+  - nodePort: 30000 # the port that the nodes will accept the requests on
+    port: 80 # the port which this service is running on
+    targetPort: 9000 # the port which the application listens on the pod
+    name: http
+  selector:
+    app: frontend # the service identifies and selects the pods which have this label
+EOF
+
+Output
+
+service/myfrontend created
+Please read the comments in the command snippet above to understand the configuration used in this manifest.
+
+Note : If you do not use nodePort parameter in ports section then a random port from the range 30000-32767 will be assigned automatically.
+
+3. Review Service
+
+Describe the service created in the previous step.
+kubectl describe service myfrontend -n workshop
+
+Sample Output
+
+Name:                     myfrontend
+Namespace:                workshop
+Labels:                   app=myfrontend
+Annotations:              <none>
+Selector:                 app=frontend
+Type:                     NodePort
+IP Family Policy:         SingleStack
+IP Families:              IPv4
+IP:                       10.100.13.81
+IPs:                      10.100.13.81
+Port:                     http  80/TCP
+TargetPort:               9000/TCP
+NodePort:                 http  30000/TCP
+Endpoints:                192.168.7.8:9000,192.168.45.127:9000,192.168.66.254:9000
+Session Affinity:         None
+External Traffic Policy:  Cluster
+Events:                   <none>
+In the output shown above,
+
+Selector (app=frontend) , the service identifies and selects the pods which have this label
+IP (10.100.13.81) shows the service virtual IP.
+Port (http 80) , name assigned to the port and the actual port number assigned to the port which the service listens on each worker node.
+TargetPort (9000) , the port which the application listens on the pod.
+NodePort (30000) , the port which the node will accept the requests on.
+Endpoints , the list of the endpoints (pods) backing the service. The IPs you see here belong to the pods which are part of the myfrontend deployment. As demonstrated back in the Scale
+Note : IP Family Policy , IP Families and IPs fields are all related to dual-stack environments. For more information please have a look at IPv4/IPv6 Dual Stack  of the Kubernetes documentation and Services  section of the Kubernetes API guide.
+
+As a result of the creation of this service, Kubernetes DNS (CoreDNS  by default in EKS) created an A record for the service DNS Name. The format of the DNS name  for the service is <service-name>.<namespace-name>.svc.<cluster-domain-name>. In this case it is myfrontend.workshop.svc.cluster.local.
+
+How can we verify the way endpoints get picked ? (Click to expand)
+In the "What is a label selector ?" part of the introduction section, we highlighted that there is a separate endpoints object defined for each service. The endpoints controller component continuously checks for the pods that have the label matching the selector defined in the service. It then automatically adds/removes the new/terminated pod IP addresses to the list in the endpoints object. You can verify the endpoints of any service by describing the endpoints object directly (rather than the service object).
+kubectl describe endpoints myfrontend -n workshop
+
+Sample Output
+
+Name:         myfrontend
+Namespace:    workshop
+Labels:       app=myfrontend
+Annotations:  endpoints.kubernetes.io/last-change-trigger-time: 2022-02-25T00:40:47Z
+Subsets:
+  Addresses:          192.168.7.8,192.168.45.127,192.168.66.254
+  NotReadyAddresses:  <none>
+  Ports:
+    Name  Port  Protocol
+    ----  ----  --------
+    http  9000  TCP
+
+Events:  <none>
+
+There are three pods backing this service hence there are three endpoints in the myfrontend endpoints object. The IP addresses belong to the pods whose label matches the selector configured in the service (app=frontend). This can also be verified using the command in the following snippet.
+kubectl get pods -n workshop --selector app=frontend -o wide
+
+Sample Output
+
+NAME                        READY   STATUS    RESTARTS   AGE   IP               NODE                                          NOMINATED NODE   READINESS GATES
+frontend-695f9f586f-dwprb   1/1     Running   1          6d19h 192.168.7.8      ip-192-168-22-88.eu-west-1.compute.internal   <none>           <none>
+frontend-695f9f586f-gcrkz   1/1     Running   1          3m    192.168.66.254   ip-192-168-93-31.eu-west-1.compute.internal   <none>           <none>
+frontend-695f9f586f-sps4w   1/1     Running   1          3m    192.168.45.127   ip-192-168-32-13.eu-west-1.compute.internal   <none>           <none>
+Note : Instead of the above command you can also use kubectl get pods -l=app=frontend -n workshop -o wide . The parameter -l stands for label.
+
+You can also get an overall view of the endpoints object that corresponds to each service by using kubectl get endpoints -n workshop or kubectl get ep -n workshop.
+
+4. Environment Summary
+A diagram is shown below based on the data identified in the previous steps.
+
+Notice the node port, service port and the target port values.
+
+5. Reachability Tests
+When we deployed this NodePort service we set the service port to 30000, however that does not automatically configure the AWS Security Group to allow traffic coming ingress on port 30000 of the Amazon EC2 worker node instances. Hence you need to manually modify the security group associated with the worker nodes to allow incoming traffic on port 30000.
+
+Add rule to the AWS security group. In the below sample screenshot, the rule you see at the top is what you need to add in your environment.
+
+In the EC2 console, for any one of the Amazon EC2 worker nodes in the cluster you need to pick the first private IP of that respective node. The one on the top as you can see in the screenshot below.
+
+Once you have that IP address, you can test the connectivity from the Cloud9 IDE' s shell, using curl as shown below. The IP address 195.168.55.18 is the private IP of one of the worker nodes. Please note that this IP is going to be a different one in your environment.
+curl 195.168.55.18:30000
+
+Output
+
+<!-- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. -->
+<!-- SPDX-License-Identifier: MIT-0 -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+|
+OUTPUT OMITTED
+|
+  </body>
+</html>
+As shown above, the requests sent from the client (Cloud9 IDE) to the port 30000 on the worker node succeeded.
+
+You can test the service by accessing also the other Amazon EC2 worker nodes’ first private IP address on port 30000.
+
+In summary, NodePort enables you to expose a service to clients external to the cluster. It accomplishes this by using a static port on each worker node and you can publish one service on a given port. The downside of NodePort is that, as shown in the previous step, since you send requests to the node IP, you need to figure out the IP address of each worker node and keep track of node and IP changes all the time. Another aspect is how would you distribute the requests across different nodes ? In that sense it is obviously not feasible; hence there is another service type called LoadBalancer which we will cover in the next section.
+
+6. Cleanup
+Delete the Nodeport service
+kubectl delete service myfrontend -n workshop
+
+Output
+
+service "myfrontend" deleted
+
+Remove the incoming rule about port 30000 from the respective AWS Security Group which is associated with the Kubernetes nodes.
+This concludes the NodePort section.
+

@@ -1,0 +1,176 @@
+Resource Quota
+Configuring Compute ResourceQuota
+Different from LimitRanges, ResourceQuotas restrictions doesn't apply for each cluster resource (e.g. Pods), but for the sum of all resources of the same kind in the Namespace.
+
+Create a ResourceQuota in the workshop Namespace.
+cat <<EOF | kubectl apply -f - 
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: mem-cpu-quota
+  namespace: workshop
+spec:
+  hard:
+    requests.cpu: "1"
+    requests.memory: 1Gi
+    limits.cpu: "2"
+    limits.memory: 2Gi
+EOF
+
+As you may remember, the applications frontend and proddetail, have resource request and limits in place.
+kubectl -n workshop get pod -l app=frontend -o yaml | yq '.items.[].spec.containers[].resources'
+
+Example output:
+limits:
+  cpu: "1"
+  memory: 256Mi
+requests:
+  cpu: 500m
+  memory: 256Mi
+
+kubectl -n workshop get pod -l app=proddetail -o yaml | yq '.items.[].spec.containers[].resources'
+
+Example output:
+limits:
+  cpu: 500m
+  memory: 512Mi
+requests:
+  cpu: 200m
+  memory: 512Mi
+
+It means that they are already consuming the applied ResourceQuota. We can see that if we check the ResourceQuota status, in the used section.
+kubectl -n workshop get resourcequota mem-cpu-quota -o yaml | yq '.status'
+
+Example output: 
+hard:
+  limits.cpu: "2"
+  limits.memory: 2Gi
+  requests.cpu: "1"
+  requests.memory: 1Gi
+used:
+  limits.cpu: 1500m
+  limits.memory: 768Mi
+  requests.cpu: 700m
+  requests.memory: 768Mi
+
+The existing resources fit in the ResourceQuota. But what happens if we scale-out the frontend Deployment replicas?
+kubectl -n workshop scale deployment frontend --replicas 2
+kubectl get pods -n workshop                                                                      
+
+Example output
+NAME                           READY   STATUS    RESTARTS   AGE
+frontend-844687cb7-kshhf       1/1     Running   0          18m
+prodcatalog-5c47947fb7-qxzph   1/1     Running   0          30h
+proddetail-7df974b4d5-wslmz    1/1     Running   0          21m
+
+The replicas were not scaled. Let's look in the Deployment status.
+kubectl -n workshop get deployment frontend -o yaml | yq '.status'                                
+
+Example output:
+availableReplicas: 1
+conditions:
+  - lastTransitionTime: "2023-02-07T20:08:45Z"
+    lastUpdateTime: "2023-02-09T02:44:29Z"
+    message: ReplicaSet "frontend-844687cb7" has successfully progressed.
+    reason: NewReplicaSetAvailable
+    status: "True"
+    type: Progressing
+  - lastTransitionTime: "2023-02-09T03:01:56Z"
+    lastUpdateTime: "2023-02-09T03:01:56Z"
+    message: Deployment does not have minimum availability.
+    reason: MinimumReplicasUnavailable
+    status: "False"
+    type: Available
+  - lastTransitionTime: "2023-02-09T03:01:56Z"
+    lastUpdateTime: "2023-02-09T03:01:56Z"
+ *message: 'pods "frontend-844687cb7-9frjw" is forbidden: exceeded quota: mem-cpu-quota, requested: limits.cpu=1,requests.cpu=500m, used: limits.cpu=1500m,requests.cpu=700m, limited: limits.cpu=2,requests.cpu=1'
+*    reason: FailedCreate
+    status: "True"
+    type: ReplicaFailure
+observedGeneration: 14
+readyReplicas: 1
+replicas: 1
+unavailableReplicas: 1
+updatedReplicas: 1
+
+As shown, the ResourceQuota is exceeded, and the Pod creation was forbidden.
+
+Cleanup Compute ResourceQuota
+kubectl -n workshop scale deployment frontend --replicas 1
+kubectl -n workshop delete resourcequota mem-cpu-quota
+
+Configuring Object ResourceQuota
+Another kind of ResourceQuota, is the Object ResourceQuota, that works the same way than the Compute ResourceQuota, but it is based on the amount of cluster objects in a given Namespace.
+
+In the scenario we will create a new ResourceQuota, to restrict the quantity of Pods and Services in the workshop Namespace.
+kubectl -n workshop get pods,svc
+
+Example output:
+NAME                               READY   STATUS    RESTARTS   AGE
+pod/frontend-844687cb7-kshhf       1/1     Running   0          34m
+pod/prodcatalog-5c47947fb7-qxzph   1/1     Running   0          31h
+pod/proddetail-7df974b4d5-wslmz    1/1     Running   0          37m
+
+NAME                  TYPE           CLUSTER-IP       EXTERNAL-IP                                                              PORT(S)        AGE
+service/frontend      LoadBalancer   172.20.184.136   aeab2147c80bd4f9aa0d148af29e65c8-825928004.us-west-2.elb.amazonaws.com   80:30711/TCP   31h
+service/prodcatalog   ClusterIP      172.20.67.51     <none>                                                                   5000/TCP       31h
+service/proddetail    ClusterIP      172.20.198.130   <none>                                                                   3000/TCP       31h
+Currently we have 3 Pods running and 3 Services in the workshop Namespace.
+
+Create the ResourceQuota limiting the Pods to 4 objects, and Services to 3 objects. 
+Note that we are creating this ResourceQuota without providing a YAML like manifest, but using the Kubernetes API through kubectl command, this also can be used for Compute ResourceQuotas and vice-versa.
+
+kubectl -n workshop create resourcequota object-quota --hard=pods=4,services=3
+kubectl -n workshop get resourcequota object-quota -o yaml | yq '.status'
+
+Example output
+hard:
+  pods: "4"
+  services: "3"
+used:
+  pods: "3"
+  services: "3"
+
+Let's try to run a new Pod.
+kubectl -n workshop run nginx --image=nginx
+kubectl -n workshop get pods
+
+Example output:
+NAME                               READY   STATUS    RESTARTS   AGE
+pod/frontend-844687cb7-kshhf       1/1     Running   0          38m
+pod/nginx                          1/1     Running   0          5s
+pod/prodcatalog-5c47947fb7-qxzph   1/1     Running   0          31h
+pod/proddetail-7df974b4d5-wslmz    1/1     Running   0          41m
+
+Since our Pod ResourceQuota is 4, we were able to run the new nginx Pod.
+kubectl -n workshop get resourcequota object-quota -o yaml | yq '.status' 
+
+hard:
+  pods: "4"
+  services: "3"
+used:
+  pods: "3"
+  services: "3"
+
+Try to expose this Pod to a Service.
+kubectl -n workshop expose pod nginx --port 80
+
+Example output:
+Error from server (Forbidden): services "nginx" is forbidden: exceeded quota: object-quota, requested: services=1, used: services=3, limited: services=3
+The Service was forbidden to be created, since it exceeds the ResourceQuota. Let's try to run another Pod.
+
+kubectl -n workshop run busybox --image=busybox
+
+Example output:
+Error from server (Forbidden): pods "busybox" is forbidden: exceeded quota: object-quota, requested: pods=1, used: pods=4, limited: pods=4
+Again we receive the error of exceeded ResourceQuota, because we already consumed the the allowed amount of Pods and Services.
+
+kubectl -n workshop get resourcequota object-quota -o yaml | yq '.status' 
+
+Example output:
+hard:
+  pods: "4"
+  services: "3"
+used:
+  pods: "4"
+  services: "3"

@@ -1,0 +1,215 @@
+In this chapter, we will learn about how to enable multiple ingress resources with a single Application Load Balancer using AWS Load Balancer Controller.
+
+1. Pre-requisite
+Make sure you have deployed the Product Catalog Application by following the steps in Deploy Microservices section.
+
+Make sure you have successfully installed the AWS Load Balancer Controller by following the steps outlined in the AWS Load Balancer Controller part in the Load Balancer section; as it is a requirement to use AWS Application Load Balancers.
+
+Make sure you have successfully created IngressClass, Ingress, Deployment and Service resources by following the steps outlined in Ingress chapter.
+
+2. Ingress Group
+The AWS Load Balancer Controller allows you to easily provision an AWS Application Load Balancer (ALB) from a Kubernetes Ingress resource. It is a popular way to provide access to Kubernetes services running in your cluster.
+
+In the AWS Load Balancer Controller, prior to version 2.0, each Ingress object that was created in Kubernetes would get its own Application Load Balancer(ALB). Customers wanted a way to lower their cost by sharing the same ALB for multiple services and namespaces. The New AWS Load Balancer Controller  enables you to simplify operations and save costs by sharing an Application Load Balancer across multiple Ingress resources in your Kubernetes cluster.
+
+By sharing an ALB, you can still use annotations for advanced routing but share a single load balancer for a team, or any combination of apps by specifying the alb.ingress.kubernetes.io/group.name annotation  annotation. All Ingress resources with same group.name will use the same Application Load Balancer.
+
+3. Scenario Overview
+We'll be using three different applications to share a single Application Load Balancer(ALB).
+
+Product Catalog frontend application deployed in workshop namespace
+frontendnew application that's also deployed in workshop namespace
+SKU Catalog application that will be deployed in sku namespace
+We're assuming you have completed the Pre-requisite section mentioned at the beginning of this chapter. You should have frontend and frontendnew applications deployed already.
+
+You can check for these resources by doing
+
+kubectl get deploy frontendnew -n workshop
+kubectl get svc frontendnew -n workshop
+kubectl get po -n workshop
+
+Output:
+
+NAME          READY   UP-TO-DATE   AVAILABLE   AGE
+frontendnew   3/3     3            3           2d22h
+
+NAME          TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)   AGE
+frontendnew   ClusterIP   10.100.142.227   <none>        80/TCP    2d22h
+
+NAME                           READY   STATUS    RESTARTS   AGE
+frontend-5ffb7ffc69-mrfnq      1/1     Running   0          2d22h
+frontendnew-89d5f6899-fr5wb    1/1     Running   0          2d22h
+frontendnew-89d5f6899-hdbj8    1/1     Running   0          2d22h
+frontendnew-89d5f6899-x96cr    1/1     Running   0          2d22h
+prodcatalog-5c47947fb7-l6w87   1/1     Running   0          2d22h
+proddetail-69d4b5fbdc-5xms8    1/1     Running   0          2d22h
+In the next steps, we'll go ahead and deploy the SKU Catalog application using helm chart.
+
+4 Deploy SKU Catalog Applications
+SKU Catalog application maintains a catalog of Stock Keeping Units(SKUs) for different types of Bikes. It's a nodejs application and is containerized using Docker. The application is packaged as a helm chart.
+
+4.1 Install Helm-chart
+
+Install the sku application by running
+helm install sku ~/environment/eks-app-mesh-polyglot-demo/workshop/apps/sku/helm-chart/
+
+Output
+
+NAME: sku
+LAST DEPLOYED: Sun Sep 25 16:05:41 2022
+NAMESPACE: default
+STATUS: deployed
+REVISION: 1
+NOTES:
+
+4.2 Verify Deployment, Service in the sku application
+To check all the resources that got deployed by installing the helm-chart above, run
+kubectl -n sku get all
+
+Output
+
+NAME                      READY   STATUS    RESTARTS   AGE
+pod/sku-679cc5c49-2hcth   1/1     Running   0          101s
+pod/sku-679cc5c49-7jg57   1/1     Running   0          101s
+pod/sku-679cc5c49-wpzmj   1/1     Running   0          101s
+
+NAME          TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)   AGE
+service/sku   ClusterIP   10.100.149.249   <none>        80/TCP    101s
+
+NAME                  READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/sku   3/3     3            3           101s
+
+NAME                            DESIRED   CURRENT   READY   AGE
+replicaset.apps/sku-679cc5c49   3         3         3       101s
+The helm-chart also installed the Ingress resource. Let's verify that now.
+
+4.3 Verify Ingress
+kubectl -n sku get ingress
+
+Output
+
+NAME   CLASS     HOSTS   ADDRESS                                                                PORTS   AGE
+sku    aws-alb   *       k8s-productcatalog-ec87bdf649-1995935763.eu-west-1.elb.amazonaws.com   80      4m49s
+We can see that the Ingress named sku is using the same Application Load Balancer address k8s-productcatalog-ec87bdf649-1995935763.eu-west-1.elb.amazonaws.com as we saw in case of frontend and frontendnew applications.
+
+Let's now describe the Ingress resource to check for more details.
+kubectl -n sku describe ingress sku
+
+Output
+
+Name:             sku
+Namespace:        sku
+Address:          k8s-productcatalog-ec87bdf649-1995935763.eu-west-1.elb.amazonaws.com
+Default backend:  default-http-backend:80 (<error: endpoints "default-http-backend" not found>)
+Rules:
+  Host        Path  Backends
+  ----        ----  --------
+  *           
+              /sku   sku:80 (192.168.45.243:3000,192.168.60.9:3000,192.168.86.152:3000)
+Annotations:  alb.ingress.kubernetes.io/group.name: product-catalog
+              alb.ingress.kubernetes.io/scheme: internet-facing
+              alb.ingress.kubernetes.io/target-type: ip
+Note: From the above output, we can see that we're using the below annotations.
+
+annotations:
+    alb.ingress.kubernetes.io/group.name: product-catalog
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+The annotation alb.ingress.kubernetes.io/scheme specifies whether your LoadBalancer will be internet facing. It supports internal and internet-facing load balancers. The default is internal. For this example we’re using internet-facing Application Load Balancer.
+
+The annotation alb.ingress.kubernetes.io/target-type specifies how to route traffic to pods. You can choose between instance and ip . instance mode will route traffic to all ec2 instances within cluster on NodePort  opened for your service. In this case, the service type must be NodePort. ip mode routes traffic directly to the pod IP. In our example, we’re using awsvpc-cni that makes Pods directly accessible on the VPC and thus enabling ip mode routing.
+
+The annotation alb.ingress.kubernetes.io/group.name specifies the group name that the Ingress resource belongs to. Ingresses with same group.name annotation form an "IngressGroup".
+
+In this example, we have set a value of product-catalog for the annotation alb.ingress.kubernetes.io/group.name. If you notice closely, we used the same value when created Ingress resource for application frontend and frontendnew in the Ingress chapter.
+
+This ensures that both the Ingress resources (workshopingress and sku) are able to share the same Application Load Balancer k8s-productcatalog-ec87bdf649 instead of creating a new one for Ingress sku.
+
+Let's check it from the kubectl commands
+kubectl get ingress -A
+
+Output
+
+NAMESPACE   NAME              CLASS     HOSTS   ADDRESS                                                                PORTS   AGE
+sku         sku               aws-alb   *       k8s-productcatalog-ec87bdf649-1995935763.eu-west-1.elb.amazonaws.com   80      25m
+workshop    workshopingress   aws-alb   *       k8s-productcatalog-ec87bdf649-1995935763.eu-west-1.elb.amazonaws.com   80      102m
+We can see that even if sku and workshop Ingress resources belong to different namespace, they are bound to the same ALB address. This is because we're using same group.name value of product-catalog for both the Ingress resources.
+
+5. Review Application Load Balancer Configuration
+Let's go back to AWS console and check the Rules.
+
+As you can see above, there's a new rule with /sku path defined has endpoints defined, which are the IP addresses of the endpoints of the Kubernetes service sku.
+
+Let’ s now check the Listener Rules and the target groups on the Application Load Balancer.
+
+There is now a target group configured for the sku http rule. The name of the target group is in the format of k8s-<k8s-namespace-name>-<k8s-backend-service-name>-randomstring. Let’ s see what is defined in that target group by clicking on it. Note that this will open up a new tab in your browser so do not forget to close the tab when you want to get back to the Listeners view.
+
+Let's also check the Service resource for the sku application.
+kubectl -n sku describe svc sku
+
+Output
+
+Name:              sku
+Namespace:         sku
+Labels:            app=sku
+                   app.kubernetes.io/managed-by=Helm
+Annotations:       alb.ingress.kubernetes.io/healthcheck-path: /ping
+                   meta.helm.sh/release-name: sku
+                   meta.helm.sh/release-namespace: default
+Selector:          app=sku
+Type:              ClusterIP
+IP Family Policy:  SingleStack
+IP Families:       IPv4
+IP:                10.100.149.249
+IPs:               10.100.149.249
+Port:              http  80/TCP
+TargetPort:        3000/TCP
+Endpoints:         192.168.45.243:3000,192.168.60.9:3000,192.168.86.152:3000
+Session Affinity:  None
+Events:            <none>
+As shown above, the registered target ips match the sku service endpoints and all targets are healthy.
+
+At this stage you should be able to access the SKU Catalog Application by navigating to the Application Load Balancer DNS name by specifying the path /sku at the end.
+
+6. Test Applications
+Copy the DNS name from the console and add /sku at the end in your browser. You should see the SKU Catalog application page as shown below.
+
+Now, let's also verify that we're able to access frontend and frontendnew as before.
+
+At this point, we are able to access three different applications with three different paths by using a single Application Load Balancer.
+
+7. Summary
+In this chapter, we learned that using AWS load balancer Controller, you can provision and share an Application Load Balancer between multiple Ingress resources for routing the traffic based on path based routing. We also learned that this feature is not restricted to Ingress resources in one namespace in an EKS cluster. Ingress resources across different namespaces in the cluster can share a single Application Load Balancer by leveraging the group.name annotation. This enables customers to limit the number of ALBs in an AWS environment and also reduce cost associated with deploying new ALBs.
+
+For a detailed list of all features and annotations offered by AWS Load Balancer Controller, please refer to the Official Documentation 
+
+8. Cleanup
+
+Let's clean up our environment by deleting frontendnew application. Delete deployment, service, ingress and ingressclass.
+
+kubectl delete deployment frontendnew -n workshop
+kubectl delete service frontendnew -n workshop
+kubectl delete ingress workshopingress -n workshop
+
+kubectl delete ingressclass aws-alb
+
+Output
+
+deployment.apps "frontendnew" deleted
+service "frontendnew" deleted
+ingress.networking.k8s.io "workshopingress" deleted
+ingressclass.networking.k8s.io "aws-alb" deleted
+
+deployment.apps "sku" deleted
+service "sku" deleted
+ingress.networking.k8s.io "sku" deleted
+
+ingressclass.networking.k8s.io "aws-alb" deleted
+Let's also delete the sku application.
+
+1
+helm uninstall sku
+
+Output
+
+release "sku" uninstalled

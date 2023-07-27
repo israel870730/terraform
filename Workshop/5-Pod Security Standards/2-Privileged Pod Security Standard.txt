@@ -1,0 +1,156 @@
+Pre-requisite
+Make sure you have completed the chapter Using Helm to ensure you have deployed the Product Catalog Application.
+
+Configuring Privileged Profile
+In this chapter we'll apply the Privileged Pod Security Standards profile.
+
+First, let's configure our environment for this workshop section.
+
+cd ~/environment/eks-app-mesh-polyglot-demo
+helm upgrade -f workshop/helm-chart/security/values-psa-pss.yaml workshop workshop/helm-chart/
+kubectl -n workshop rollout restart deploy frontend 
+kubectl -n workshop rollout status deploy frontend 
+
+We'll start looking at PSS by exploring the Privileged profile, which is the most permissive and allows for known privilege escalations.
+
+kubectl describe ns workshop
+
+Example output:
+Name:         workshop
+Labels:       app.kubernetes.io/managed-by=Helm
+              kubernetes.io/metadata.name=workshop
+Annotations:  meta.helm.sh/release-name: workshop
+              meta.helm.sh/release-namespace: default
+Status:       Active
+
+No resource quota.
+
+No LimitRange resource.
+
+As you see, the workshop namespace does not have any PSA labels attached.
+Let's take a look in the frontend Deployment spec for security configuration in the workshop namespace.
+
+kubectl -n workshop get deployment frontend -o yaml | yq '.spec.template.spec'
+
+Example output:
+containers:
+  - env:
+      - name: BASE_URL
+        value: http://prodcatalog.workshop:5000/products/
+      - name: AWS_XRAY_DAEMON_ADDRESS
+        value: xray-service.default:2000
+    image: public.ecr.aws/u2g6w7p2/eks-workshop-demo/frontend_node:2.0
+    imagePullPolicy: Always
+    livenessProbe:
+      failureThreshold: 3
+      httpGet:
+        path: /ping
+        port: 9000
+        scheme: HTTP
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      successThreshold: 1
+      timeoutSeconds: 1
+    name: frontend
+    ports:
+      - containerPort: 9000
+        name: http
+        protocol: TCP
+    readinessProbe:
+      failureThreshold: 3
+      httpGet:
+        path: /ping
+        port: 9000
+        scheme: HTTP
+      initialDelaySeconds: 5
+      periodSeconds: 3
+      successThreshold: 1
+      timeoutSeconds: 1
+    resources: {}
+    securityContext:
+      allowPrivilegeEscalation: false
+      runAsUser: 1000
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+dnsPolicy: ClusterFirst
+restartPolicy: Always
+schedulerName: default-scheduler
+securityContext: {}
+terminationGracePeriodSeconds: 30
+
+In the above configuration, the securityContext is null {} at the Pod level. But it set to not allowPrivilegeEscalation, and to runAsUser: 1000 at the Container level.
+Check the username that's running the Pod.
+
+kubectl -n workshop exec -ti $(kubectl get pods -n workshop -l app=frontend -o name) -- whoami
+
+Example output:
+node
+
+Let's add some Privileged permissions to the above Pod security configuration at the container level, and check if the default configured PSA allows it.
+Specifically we'll add the privileged flag as true and the runAsUser: 0 to the Pod, which means that it will be able to access can access the hosts resources and run as root user.
+Apply the changes and check if PSA allows the Pod with the above security permissions.
+
+helm upgrade -f workshop/helm-chart/security/values-psa-pss-priv.yaml workshop workshop/helm-chart/
+kubectl -n workshop rollout status deploy frontend 
+
+kubectl -n workshop get pods -l app=frontend                                                  
+
+Example output:
+NAME                     READY   STATUS    RESTARTS   AGE
+frontend-6b6d94c-55828   1/1     Running   0          35s
+
+The fact that the Pod is running, and no warning was presented, shows that the default PSA mode enabled for Privileged PSS profile is permissive and allows Pods to request elevated security permissions if necessary.
+
+Validate the container securityContext configuration, and the execution as privileged user (root).
+kubectl -n workshop get deployment frontend -o yaml | yq '.spec.template.spec'
+
+Example output:
+containers:
+  - env:
+      - name: BASE_URL
+        value: http://prodcatalog.workshop:5000/products/
+      - name: AWS_XRAY_DAEMON_ADDRESS
+        value: xray-service.default:2000
+    image: public.ecr.aws/u2g6w7p2/eks-workshop-demo/frontend_node:2.0
+    imagePullPolicy: Always
+    livenessProbe:
+      failureThreshold: 3
+      httpGet:
+        path: /ping
+        port: 9000
+        scheme: HTTP
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      successThreshold: 1
+      timeoutSeconds: 1
+    name: frontend
+    ports:
+      - containerPort: 9000
+        name: http
+        protocol: TCP
+    readinessProbe:
+      failureThreshold: 3
+      httpGet:
+        path: /ping
+        port: 9000
+        scheme: HTTP
+      initialDelaySeconds: 5
+      periodSeconds: 3
+      successThreshold: 1
+      timeoutSeconds: 1
+    resources: {}
+    securityContext:
+      privileged: true
+      runAsUser: 0
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+dnsPolicy: ClusterFirst
+restartPolicy: Always
+schedulerName: default-scheduler
+securityContext: {}
+terminationGracePeriodSeconds: 30
+
+kubectl -n workshop exec -ti $(kubectl get pods -n workshop -l app=frontend -o name) -- whoami
+
+Example output:
+root

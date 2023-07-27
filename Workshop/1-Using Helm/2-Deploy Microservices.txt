@@ -1,0 +1,90 @@
+Helm Chart for Product Catalog Microservices
+For the deployment of our workshop application we have already created the Helm chart and uploaded to the Git Repository (https://github.com/aws-containers/eks-app-mesh-polyglot-demo/tree/master/workshop/helm-chart)
+And the folder structure for Helm chart looks as below:
+
+If you take a look at the above directory, you'll notice few files.
+
+NOTES.txt: The "help text" for your chart. This will be displayed to your users when they run helm install.
+namespace.yaml: manifest for creating a Kubernetes namespace for our deployment.
+$app_deployment.yaml: manifest for creating a Kubernetes deployment of our microservices.
+$app_service.yaml: manifest for creating a service endpoint for our deployment.
+helpers.tpl: A place to put template helpers that you can re-use throughout the chart.
+If you want to create your own Helm chart, you can follow the steps here (https://helm.sh/docs/chart_template_guide/getting_started/)
+
+Ensure that you have cloned the repository for this Microservice Application based on the Clone the Application chapter instructions.
+
+Deploy the Helm Chart
+Use the dry-run flag to test our templates, Confirm that the values created by the template look correct.
+
+Deploy the Helm Chart
+Use the dry-run flag to test our templates, Confirm that the values created by the template look correct.
+
+cd ~/environment/eks-app-mesh-polyglot-demo
+helm install --debug --dry-run workshop ~/environment/eks-app-mesh-polyglot-demo/workshop/helm-chart/
+
+It should show below output:
+
+install.go:173: [debug] Original chart version: ""
+install.go:190: [debug] CHART PATH: /home/ec2-user/environment/eks-app-mesh-polyglot-demo/workshop/helm-chart
+
+NAME: workshop
+LAST DEPLOYED: Tue Jul 13 16:59:46 2021
+NAMESPACE: default
+STATUS: pending-install
+REVISION: 1
+USER-SUPPLIED VALUES:
+....
+....
+NOTES:
+1. Get the application URL by running these commands:
+     NOTE: It may take a few minutes for the LoadBalancer to be available.
+           You can watch the status of by running 'kubectl get --namespace workshop svc -w frontend'
+  export LB_NAME=$(kubectl get svc --namespace workshop frontend -o jsonpath="{.status.loadBalancer.ingress[*].hostname}")
+  echo http://$LB_NAME:80
+If everything looks good, then install the Helm chart
+
+cd ~/environment/eks-app-mesh-polyglot-demo
+helm install workshop ~/environment/eks-app-mesh-polyglot-demo/workshop/helm-chart/
+
+It should show below output:
+
+NAME: workshop
+LAST DEPLOYED: Tue Jul 13 17:01:56 2021
+NAMESPACE: default
+STATUS: deployed
+REVISION: 1
+NOTES:
+1. Get the application URL by running these commands:
+     NOTE: It may take a few minutes for the LoadBalancer to be available.
+           You can watch the status of by running 'kubectl get --namespace workshop svc -w frontend'
+  export LB_NAME=$(kubectl get svc --namespace workshop frontend -o jsonpath="{.status.loadBalancer.ingress[*].hostname}")
+  echo http://$LB_NAME:80
+
+Confirm the setup
+
+kubectl get pod,svc -n workshop -o wide
+
+It should show below output:
+
+NAME                              READY   STATUS    RESTARTS   AGE   IP               NODE                                           NOMINATED NODE   READINESS GATES
+pod/frontend-6b698489df-xxxxx     1/1     Running   0          50s   192.xxxxx.46.yy    ip-192-168-53-83.us-west-2.compute.internal    <none>           <none>
+pod/prodcatalog-95df774d4-xxxxx   1/1     Running   0          50s   192.xxxxx.56.yy    ip-192-168-53-83.us-west-2.compute.internal    <none>           <none>
+pod/proddetail-7b78f4b59f-xxxxx   1/1     Running   0          50s   192.xxxxx.86.yy   ip-192-168-91-255.us-west-2.compute.internal   <none>           <none>
+
+NAME                  TYPE           CLUSTER-IP       EXTERNAL-IP                                                              PORT(S)          AGE   SELECTOR
+service/frontend      LoadBalancer   10.xxxxx.146.yy    a062a547856a14dd48c798033c8b7dd9-xxxxxxx.us-west-2.elb.amazonaws.com   80:31697/TCP   51s   app=frontend
+service/prodcatalog   ClusterIP      10.xxxxx.103.yy   <none>                                                                   5000/TCP         51s   app=prodcatalog
+service/proddetail    ClusterIP      10.xxxxx.54.yy    <none>                                                                   3000/TCP         51s   app=proddetail
+
+It takes 3 to 5 minutes for the Load Balancer to be created. You can go to Console and Go to Load Balancer and check if the state is Active.
+
+Access the applicationHeader anchor link
+
+Get the Loadbalancer url
+
+export LB_NAME=$(kubectl get svc frontend -n workshop -o jsonpath="{.status.loadBalancer.ingress[*].hostname}") 
+echo $LB_NAME
+
+Open the Application using the above Loadbalancer url, you should see the below screen.
+
+

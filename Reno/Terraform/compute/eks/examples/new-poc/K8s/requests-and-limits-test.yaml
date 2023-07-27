@@ -1,0 +1,27 @@
+apiVersion: apps/v1 
+kind: Deployment 
+metadata:
+  name: apache-app
+  namespace: default 
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: apache-app
+  template:
+    metadata:
+      labels:
+        app: apache-app
+    spec:
+      containers:
+      - name: apache-app
+        image: nginx
+        ports:
+        - containerPort: 80 
+        resources:
+          requests:
+            cpu: "1500m" 
+            memory: "1280Mi"
+          limits:
+            cpu: "2000m"
+            memory: "2000Mi"

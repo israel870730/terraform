@@ -1,0 +1,55 @@
+aws_region: &region "region_sample"
+region: *region
+
+######
+# VPC
+######
+
+# vpc_name: &vpc_name "vpc_name_sample"
+
+vpc_tags:
+  vpc_tag_key_sample: "vpc_tag_value_sample"
+
+public_subnet_tags:
+  subnet_public_key_sample: "subnet_public_value_sample"
+  
+private_subnet_tags:
+  subnet_private_key_sample: "subnet_private_value_sample"
+
+isolated_subnet_tags:
+  subnet_isolated_key_sample: "subnet_isolated_value_sample"
+
+
+create_endpoint: true
+
+enable_dns_hostnames: true
+enable_nat_gateway: false
+
+######
+# EFS
+######
+efs_name: "efs_name_sample"
+
+######
+# EKS
+######
+
+cluster_name: "cluster_name_sample"
+cluster_version: "cluster_version_sample"
+# cluster_iam_role_name: "eks-clusterrole"
+# manage_cluster_iam_resources: false
+# manage_worker_iam_resources: false
+# workers_role_name: "eks-cluster-reno-role"
+
+map_users:
+userarn_sample
+
+worker_groups:
+  - asg_desired_capacity: asg_desired_capacity_sample
+    asg_max_size: asg_max_size_sample
+    asg_min_size: asg_min_size_sample
+    instance_type: instance_type_sample
+    name: spot-1-
+    root_volume_size: '60'
+    spot_price: '0.9999'
+    # iam_instance_profile_name: "eks-cluster-reno-role"

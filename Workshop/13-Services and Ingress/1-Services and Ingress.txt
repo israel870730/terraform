@@ -1,0 +1,91 @@
+In this chapter, we will explain service and ingress in Kubernetes. We will also talk about how to leverage these constructs to expose a Kubernetes application to internal and external clients.
+
+You will see optional paragraphs that you can expand throughout the whole chapter. Please read those only if you are interested in low level details.
+
+1. Pre-requisite
+
+Please make sure you have cloned the respective GitHub repository and installed the Product Catalog application using Helm in the following snippet. For more information about Helm please refer to Using Helm chapter.
+cd ~/environment
+git clone https://github.com/aws-containers/eks-app-mesh-polyglot-demo.git
+cd eks-app-mesh-polyglot-demo
+helm install workshop ~/environment/eks-app-mesh-polyglot-demo/workshop/helm-chart/
+
+2. Service
+
+A Kubernetes service is a REST API object in Kubernetes API; just like pods, deployments, replicasets. In essence, it is an abstraction which groups the pods together based on label selectors (https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#label-selectors).
+
+It provides a frontend for the endpoints (pods) and keeps an updated list of endpoints in case of any pod failures/instantiations.
+Any request that comes inbound to the DNS name/IP address of the service gets forwarded to one of the pods backing that service.
+
+A Kubernetes service can be of different types such as ClusterIP, Headless, NodePort and LoadBalancer. Each service type addresses a specific traffic pattern.
+
+Do we really need an abstraction from the first place ? (Click to expand)
+The reason is, because of the fact that every pod gets its own IP address according to Kubernetes Network Model . However pods are ephemeral by the immutable nature of Kubernetes. When a pod fails for some reason, 
+it will get replaced with a new pod which has a completely different IP address. A typical business application has multiple tiers and each tier would consist of multiple identical pods for scale and performance reasons. 
+In such an architecture, when a tier needs to communicate with another tier, there must be a stable/consistent way to access the pods of a given application tier through a single hostname/address/entry point. And that is exactly what 
+a Kubernetes service provides.
+
+What is a label selector ? Why the term endpoint is used (instead of pod) ? How does Kubernetes keep track of endpoints backing the service ? (Click to expand)
+To create a service, you use a service manifest (yaml file), which defines properties of the service, and then you push that manifest o the API server. The way you define which pods should be backing the service is by using a specific 
+property called selector in the service manifest. Using selectors is a common method to identify and select objects within Kubernetes; it is documented as label selectors  in the official Kubernetes documentation. Any given pod, 
+hose label matches the selector defined in the service manifest, is called an endpoint of that service or a service endpoint. For a given Kubernetes service, a list of endpoints is kept representing the pods which are backing that service. 
+And that list is actually a separate object in Kubernetes API, which is called endpoints object.
+
+Let’s go through what actually happens in the Kubernetes control plane when a service is created. First of all, a service object and a corresponding endpoints object is created. Next, 
+he endpoints controller  (part of the kube-controller-manager in Kubernetes) starts searching for all the pod objects in the Kubernetes API with matching labels. Endpoints controller continuously and automatically
+adds/removes pods to/from list of endpoints in the endpoints object. The Kubernetes service object leverages this list from the endpoints object. With this approach, the Kubernetes service automatically keeps track of service endpoints (pods), 
+to which the traffic should be forwarded to.
+
+You may be wondering why would we need two separate objects (service and endpoints) to accomplish all of the above ? This is because although a Kubernetes service most commonly abstracts access to Kubernetes pods as service endpoints, 
+it can also abstract other kinds of backends like a physical database server. This is achieved by defining the service without label selectors  where the endpoints object is configured manually by the Kubernetes admin. In this scenario 
+traffic that comes inbound to a service gest forwarded to a server (physical or virtual machine) external to Kubernetes.
+
+Good. Things are making more sense now. How exactly a pod communicates with a service ? Does it leverage DNS or something else ? (Click to expand)
+A pod knowing how to access a service is called service discovery . There are two main modes, one is environment variables and the other is DNS. The environment variables method has limitations hence we will focus on the more common one which 
+is DNS.
+
+When a Kubernetes service is created, Kubernetes DNS automatically creates an A record for that service in the DNS server of that cluster. Amazon EKS uses CoreDNS  by default. A unique virtual IP address is assigned to the service which is 
+explained in detail in the upcoming sections. As long as the service is running, the unique DNS name and IP address assigned to the service will never change. A client can resolve the DNS name of the service to an IP address leveraging Kubernetes
+DNS and then use that IP address to access the service.
+
+The format of the DNS name  that Kubernetes DNS creates for the service is <service-name>.<namespace-name>.svc.<cluster-domain-name>.
+
+What about the actual service port. Is it TCP ? Are other protocols supported ? (Click to expand)
+TCP is the default but UDP and SCTP  is also supported.
+
+3. Current State
+
+The Product Catalog Application has three tiers; Frontend, Product Catalog and Catalog Detail. Each tier of the application is implemented with a Kubernetes service and a deployment (as a single pod) in a namespace called workshop.
+ All these resources also have some labels assigned. Let' s have a quick look at them.
+
+Note : Keep in mind that the deployment and service for the Catalog Detail tier are named in a slightly different way, which is proddetail.
+
+Review the deployments.
+kubectl get deployments -n workshop                                                                                                                  
+
+Output
+
+NAME          READY   UP-TO-DATE   AVAILABLE   AGE
+frontend      1/1     1            1           6d9h
+prodcatalog   1/1     1            1           6d9h
+proddetail    1/1     1            1           6d9h
+Review the pods and the labels for each pod. Kubernetes service leverages label selectors to identify the pods.
+1
+kubectl get pods --show-labels -n workshop
+
+Sample Output
+
+NAME                           READY   STATUS             RESTARTS   AGE   LABELS
+frontend-695f9f586f-dwprb      1/1     Running            0          6d9h  app=frontend,pod-template-hash=5ffb7ffc69
+prodcatalog-6cc8ff6db9-rfnxw   1/1     Running            0          6d9h  app=prodcatalog,pod-template-hash=5c47947fb7
+proddetail-6dbddf7fd7-nxk56    1/1     Running            0          6d9h  app=proddetail,pod-template-hash=69d4b5fbdc
+Review the services.
+1
+kubectl get services -n workshop
+
+Sample Output
+
+NAME          TYPE           CLUSTER-IP      EXTERNAL-IP                                                               PORT(S)        AGE
+frontend      LoadBalancer   10.100.38.226   ac461b60fdb464afeb0805598760c620-1326466164.eu-west-1.elb.amazonaws.com   80:30583/TCP   6d6h
+prodcatalog   ClusterIP      10.100.14.157   <none>                                                                    5000/TCP       6d6h
+proddetail    ClusterIP      10.100.245.71   <none>                                                                    3000/TCP       6d6h

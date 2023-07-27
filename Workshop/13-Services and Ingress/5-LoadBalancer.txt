@@ -1,0 +1,387 @@
+In this section we will explore the service type of LoadBalancer. In the previous section we saw how NodePort service exposes a port on each worker node’ s IP to make the service accessible to the clients which are external to the cluster. However it becomes challenging to maintain access to the service when there are node and IP changes in your Kubernetes cluster and also figure out an efficient way to distribute the requests across all nodes. Service type of LoadBalancer addresses these points.
+
+LoadBalancer service is built on top of NodePort. Hence when you create a LoadBalancer service, a NodePort is created automatically. Since NodePort is built on top of ClusterIP, a service virtual IP is also assigned automatically. All the characteristics mentioned earlier in the ClusterIP section, apply here as well. However, to steer the traffic from external clients to the Kubernetes nodes (on the NodePort), the actual data path for the LoadBalancer service is implemented by a load balancer external to the Kubernetes cluster.
+
+For information on how LoadBalancer works in AWS cloud please click on the arrow to expand
+You have a set of diverse options when it comes to using AWS Elastic Load Balancers matching your specific needs. There are three main types of Elastic Load Balancers in AWS. 
+Those are Classic Load Balancer , Network Load Balancer  and Application Load Balancer . In short Classic Load Balancer is previous generation and it can handle Layer 4/Layer 7 (TCP, SSL/TLS, HTTP, HTTPS) traffic.
+ Network Load Balancer is for Layer4 (TCP, UDP, TLS). Application Load Balancer is for Layer 7 (HTTP, HTTPS, gRPC, WebSockets). 
+ You can have a look at the comprehensive comparison table about them on AWS ELB page (https://aws.amazon.com/elasticloadbalancing/features/).
+
+
+1. Pre-requisite
+2. Classic Load Balancer
+3. AWS Load Balancer Controller
+4. Network Load Balancer
+5. Load Balancer Summary
+
+1. Pre-requisite
+The focus will be the Frontend tier of the Product Catalog application, which is represented as a deployment with the name frontend and a service with the same name.
+
+Make sure you have scaled out the deployment frontend from one pods to three pods (replicas). This is done back in Scale Out Frontend Deployment section of the NodePort chapter.
+
+However if you skipped that section you need to scale out the deployment before moving on this section. To accomplish that please use the below command
+kubectl -n workshop scale deployment frontend --replicas=3
+
+2. Classic Load Balancer
+In this section we will provide a brief introduction to Classic Load Balancer for informational purposes as it is treated as legacy and not part of the best practice recommendation.
+
+Let ‘s look at the current services deployed as part of the sample application called Product Catalog in the workshop namespace.
+kubectl get services -n workshop
+
+Output
+
+NAME          TYPE           CLUSTER-IP      EXTERNAL-IP                                                               PORT(S)        AGE
+frontend      LoadBalancer   10.100.38.226   ac461b60fdb464afeb0805598760c620-1326466164.eu-west-1.elb.amazonaws.com   80:30583/TCP   6d6h
+prodcatalog   ClusterIP      10.100.14.157   <none>                                                                    5000/TCP       6d6h
+proddetail    ClusterIP      10.100.245.71   <none>                                                                    3000/TCP       6d6h
+
+As shown above, there is already a frontend service which is service type of LoadBalancer and its EXTERNAL-IP field has a DNS name in it. This will be explained in a moment but first let' s review the frontend service.
+kubectl describe service frontend -n workshop
+
+Output
+
+Name:                     frontend
+Namespace:                workshop
+Labels:                   app=frontend
+                          app.kubernetes.io/managed-by=Helm
+Annotations:              meta.helm.sh/release-name: workshop
+                          meta.helm.sh/release-namespace: default
+Selector:                 app=frontend
+Type:                     LoadBalancer
+IP:                       10.100.38.226
+LoadBalancer Ingress:     ac461b60fdb464afeb0805598760c620-1326466164.eu-west-1.elb.amazonaws.com
+Port:                     http  80/TCP
+TargetPort:               9000/TCP
+NodePort:                 http  30583/TCP
+Endpoints:                192.168.45.127:9000,192.168.66.254:9000,192.168.7.8:9000
+Session Affinity:         None
+External Traffic Policy:  Cluster
+Events:                   <none>
+
+Now let’ s look at the load balancers on the AWS EC2 console.
+
+As you might have already noticed the DNS name you have seen in the EXTERNAL-IP field of the service is set to the AWS Elastic Load Balancer DNS Name. This will be a different DNS name in your environment.
+
+Note : The DNS name of the Elastic Load Balancer is not related to the Kubernetes DNS implementation, it is assigned by Amazon DNS service, Route 53. Kubernetes DNS still creates an A record as frontend.workshop.svc.cluster.local but this is internal to the Kubernetes cluster.
+
+In summary, if no specific Kubernetes annotations are used for a Kubernetes service, by default, it is the Service Controller that owns the external load balancer deployment process and it provisions a Classic Load Balancer in AWS.
+
+We will leave this existing service as it is. Instead, in the following sections, we will create seperate services for the same frontend tier of the Product Catalog Application. That way we will experience and verify the load balancer provisioning process and different type of AWS Elastic Load Balancers.
+
+3. AWS Load Balancer Controller
+AWS Load Balancer Controller is a controller to help manage Elastic Load Balancers for a Kubernetes cluster. This is a Kubernetes project that's been built and designed to bridge the gap between Kubernetes and AWS networking components. For example, the controller supports provisioning of Network Load Balancers(NLBs) by serving standard Kubernetes Service  resources of Type LoadBalancer. If you create an Ingress  resource, the controller provisions an Application Load Balancer(ALB).
+
+This section walks you through the installation steps for the AWS Load Balancer Controller v2.4.0, which are also published in the open source project documentation on GitHub  or on AWS documentation . Please check these links for most up to date information for different versions.
+
+Note : Make sure the Kubernetes cluster version is 1.19+. You can use kubectl version to find out.
+
+AWS Load Balancer Controller is installed as a deployment, which is comprised of two pods for reliability and availability, in the kube-system namespace. We will verify this in the last step of this section.
+
+3.1. Create IAM OIDC Provider
+We need to associate our EKS cluster with IAM as an OIDC provider to use an IAM role for the service account that is used in AWS Load Balancer Controller. Copy and paste the following command snippet.
+eksctl utils associate-iam-oidc-provider \
+      --region ${AWS_REGION} \
+      --cluster ${LAB_CLUSTER_ID} \
+      --approve
+
+Output
+
+2022-03-08 15:46:16 [ℹ]  eksctl version 0.86.0
+2022-03-08 15:46:16 [ℹ]  using region eu-west-1
+2022-03-08 15:46:16 [ℹ]  will create IAM Open ID Connect provider for cluster "eksworkshop-eksctl" in "eu-west-1"
+2022-03-08 15:46:16 [✔]  created IAM Open ID Connect provider for cluster "eksworkshop-eksctl" in "eu-west-1"
+3.2. Create IAM Policy for the AWS Load Balancer Controller
+We need to create an IAM policy and associate it with the IAM role that the AWS Load Balancer Controller service account uses.
+
+First download the policy JSON file.
+curl -o iam-policy.json https://raw.githubusercontent.com/aws-containers/eks-app-mesh-polyglot-demo/master/workshop/aws_lbc_iam_policy.json
+
+Output
+
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100  7617  100  7617    0     0  35979      0 --:--:-- --:--:-- --:--:-- 35929
+
+Create the IAM policy based on the JSON file you have just downloaded.
+aws iam create-policy \
+      --policy-name AWSLoadBalancerControllerIAMPolicy \
+      --policy-document file://iam-policy.json
+
+Output
+
+{
+    "Policy": {
+        "PolicyName": "AWSLoadBalancerControllerIAMPolicy",
+        "PolicyId": "ANPA2HDQZUN2Y2G7H7WG6",
+        "Arn": "arn:aws:iam::123456789012:policy/AWSLoadBalancerControllerIAMPolicy",
+        "Path": "/",
+        "DefaultVersionId": "v1",
+        "AttachmentCount": 0,
+        "PermissionsBoundaryUsageCount": 0,
+        "IsAttachable": true,
+        "CreateDate": "2022-03-08T15:49:51+00:00",
+        "UpdateDate": "2022-03-08T15:49:51+00:00"
+    }
+}
+
+3.3. Create an IAM Role and ServiceAccount for the AWS Load Balancer controller
+
+In this step we will create an IAM role and associate the service account, that the AWS Load Balancer controller will use, with that IAM role. Sample command is shown below.
+eksctl create iamserviceaccount \
+--cluster=${LAB_CLUSTER_ID} \
+--namespace=kube-system \
+--name=aws-load-balancer-controller \
+--attach-policy-arn=arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicy \
+--override-existing-serviceaccounts \
+--region ${AWS_REGION} \
+--approve
+
+Output
+
+2022-03-08 15:52:05 [ℹ]  eksctl version 0.86.0
+2022-03-08 15:52:05 [ℹ]  using region eu-west-1
+2022-03-08 15:52:05 [ℹ]  1 iamserviceaccount (kube-system/aws-load-balancer-controller) was included (based on the include/exclude rules)
+2022-03-08 15:52:05 [!]  metadata of serviceaccounts that exist in Kubernetes will be updated, as --override-existing-serviceaccounts was set
+2022-03-08 15:52:05 [ℹ]  1 task: { 
+    2 sequential sub-tasks: { 
+        create IAM role for serviceaccount "kube-system/aws-load-balancer-controller",
+        create serviceaccount "kube-system/aws-load-balancer-controller",
+    } }2022-03-08 15:52:05 [ℹ]  building iamserviceaccount stack "eksctl-eksworkshop-eksctl-addon-iamserviceaccount-kube-system-aws-load-balancer-controller"
+2022-03-08 15:52:05 [ℹ]  deploying stack "eksctl-eksworkshop-eksctl-addon-iamserviceaccount-kube-system-aws-load-balancer-controller"
+2022-03-08 15:52:05 [ℹ]  waiting for CloudFormation stack "eksctl-eksworkshop-eksctl-addon-iamserviceaccount-kube-system-aws-load-balancer-controller"
+2022-03-08 15:52:23 [ℹ]  waiting for CloudFormation stack "eksctl-eksworkshop-eksctl-addon-iamserviceaccount-kube-system-aws-load-balancer-controller"
+2022-03-08 15:52:40 [ℹ]  waiting for CloudFormation stack "eksctl-eksworkshop-eksctl-addon-iamserviceaccount-kube-system-aws-load-balancer-controller"
+2022-03-08 15:52:40 [ℹ]  created serviceaccount "kube-system/aws-load-balancer-controller"
+
+3.4. Deploy AWS Load Balancer Controller using Helm
+Make sure have Helm installed by following the steps in the Using Helm section. If you have not then use the below command to install it.
+
+curl -sSL https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
+
+Output
+
+Downloading https://get.helm.sh/helm-v3.8.0-linux-amd64.tar.gz
+Verifying checksum... Done.
+Preparing to install helm into /usr/local/bin
+helm installed into /usr/local/bin/helm
+
+Next, add the EKS chart Helm repo.
+
+helm repo add eks https://aws.github.io/eks-charts
+
+Output
+
+"eks" has been added to your repositories
+
+Next, deploy AWS Load Balancer Controller using the respective Helm chart. Copy and paste the command shown below.
+
+helm install aws-load-balancer-controller eks/aws-load-balancer-controller -n kube-system --set clusterName=${LAB_CLUSTER_ID} --set serviceAccount.create=false --set serviceAccount.name=aws-load-balancer-controller
+
+Output
+
+name=aws-load-balancer-controller
+NAME: aws-load-balancer-controller
+LAST DEPLOYED: Tue Mar  8 15:55:52 2022
+NAMESPACE: kube-system
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+AWS Load Balancer controller installed!
+3.5. Verify AWS Load Balancer Controller Deployment
+Let’ s verify if the AWS Load Balancer Controllers are in healthy and running state.
+
+kubectl get pods -n kube-system
+
+Output
+
+NAME                                            READY   STATUS    RESTARTS   AGE
+aws-load-balancer-controller-586d96695d-42hsx   1/1     Running   0          135m
+aws-load-balancer-controller-586d96695d-pwfqd   1/1     Running   0          135m
+aws-node-5cz8d                                  1/1     Running   0          148m
+aws-node-d2wpd                                  1/1     Running   0          148m
+aws-node-fxzfr                                  1/1     Running   0          148m
+coredns-65ccb76b7c-rn5sb                        1/1     Running   0          156m
+coredns-65ccb76b7c-sprfx                        1/1     Running   0          156m
+kube-proxy-8spl9                                1/1     Running   0          148m
+kube-proxy-lsclv                                1/1     Running   0          148m
+kube-proxy-slfz5                                1/1     Running   0          148m
+
+The first two pods in the above output are the AWS Load Balancer Controller pods.
+
+This concludes this section. Let's explore Network Load Balancer next.
+
+4. Network Load Balancer
+In this section we will explore the Kubernetes service type of LoadBalancer which is based on an AWS Network Load Balancer.
+
+4.1. Pre-requisite
+Make sure you have successfully installed AWS Load Balancer Controller following the steps outlined in the previous section; as it is a requirement to use AWS Network Load Balancers.
+
+4.2. Create Service
+The focus will be the Frontend tier of the Product Catalog application, which is represented as a deployment with the name frontend and a service with the same name. However we are going to create a separate service for the existing Frontend tier of the Product Catalog Application. We are going to call the new service frontendnlb.
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontendnlb
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: external #AWS Load Balancer Controller fulfills services that has this annotation 
+    service.beta.kubernetes.io/aws-load-balancer-name : mynlb #User defined name given to AWS Network Load Balancer
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing #Places the load balancer on public subnets
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip #The Pod IPs should be used as the target IPs (rather than the node IPs as was the case with Network Load Balancer in the previous section)
+  namespace: workshop
+  labels:
+    app: frontendnlb
+spec:
+  type: LoadBalancer #The type of service
+  ports:
+    - port: 80 #The port which the service is running on
+      targetPort: 9000 #The port on the pod which is backing this service. If not specified, it is assumed to be the same as the service port.
+      name: http
+  selector:
+    app: frontend #The service identifies all the pods which have this label and then automatically configures the IP addresses of those pods as endpoints of this service.
+EOF
+
+Output
+
+service/frontendnlb created
+In the above manifest,
+
+Four annotations are used.
+The first annotation external means that AWS Load Balancer controller should own the process and instantiate a Network Load Balancer to fulfill the Kubernetes service object.
+The second annotation mynlb provides the capability to name the load balancer.
+The third annotation internet-facing means that the load balancer should be placed in a public subnet and be able to receive traffic from the internet.
+The fourth annotation ip means that the target that the AWS load balancer should use be the IP address of the Pod (rather than the node as was the case in the previous section) . This way not only Amazon EC2 but AWS Fargate is also supported as well.
+The service port, that the service will be listening on, is configured as 80.
+TargetPort is configured as 9000. It is actually the port, the application listens to the requests on, running on the pods which are backing this service.
+selector is used to identify and match all the pods which have app: frontend label. So the Kubernetes endpoints controller automatically adds all those pods to the list of endpoints for the service.
+Kubernetes DNS (CoreDNS  by default in EKS) creates an A record for the service DNS Name.
+The format of the DNS name  for the service is <service-name>.<namespace-name>.svc.<cluster-domain-name>. In this case it is frontendnlb.workshop.svc.cluster.local.
+
+Let’ s check if anything has changed on the Load Balancers list in the EC2 Console.
+
+As shown above, a new AWS Network Load Balancer is provisioned for this service. Note that the DNS name in your environment will be different.
+
+Note : It sometimes takes a while for the load balancer to appear in the list. Make sure the state is active under the Basic Configuration section shown in the above screenshot.
+
+4.3. Review ServiceHeader anchor link
+Let’ s verify the DNS name of the service in Kubernetes.
+
+
+kubectl get services -n workshop
+
+Output
+
+NAME          TYPE           CLUSTER-IP      EXTERNAL-IP                                                               PORT(S)        AGE
+frontend      LoadBalancer   10.100.38.226   ac461b60fdb464afeb0805598760c620-1326466164.eu-west-1.elb.amazonaws.com   80:30583/TCP   28d
+frontendnlb   LoadBalancer   10.100.149.80   mynlb-05bd20beb193d21f.elb.eu-west-1.amazonaws.com                        80:31603/TCP   8m20s
+myfrontend    NodePort       10.100.47.175   <none>                                                                    80:30000/TCP   3d3h
+prodcatalog   ClusterIP      10.100.14.157   <none>                                                                    5000/TCP       28d
+proddetail    ClusterIP      10.100.245.71   <none>                                                                    3000/TCP       28d
+
+Note : You may see Pending in External-IP column for the frontendnlb service until the provisioning process of AWS Network Load Balancer is complete and it gets assigned a DNS name. (Please give it a few minutes)
+
+You can verify the DNS name that you see in the EXTERNAL-IP field for the frontendnlb service above, to the DNS name that you have seen in the EC2 console in the previous step. They both should be the same, in this case it is mynlb-05bd20beb193d21f.elb.eu-west-1.amazonaws.com.
+
+Let’ s review the properties of the frontendnlb service.
+kubectl describe services frontendnlb -n workshop
+
+Output
+
+Name:                     frontendnlb
+Namespace:                workshop
+Labels:                   app=frontendnlb
+Annotations:              service.beta.kubernetes.io/aws-load-balancer-name: mynlb
+                          service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+                          service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+                          service.beta.kubernetes.io/aws-load-balancer-type: external
+Selector:                 app=frontend
+Type:                     LoadBalancer
+IP:                       10.100.149.80
+LoadBalancer Ingress:     mynlb-05bd20beb193d21f.elb.eu-west-1.amazonaws.com
+Port:                     http  80/TCP
+TargetPort:               9000/TCP
+NodePort:                 http  31603/TCP
+Endpoints:                192.168.45.127:9000,192.168.66.254:9000,192.168.7.8:9000
+Session Affinity:         None
+External Traffic Policy:  Cluster
+Events:
+  Type    Reason                  Age   From                Message
+  ----    ------                  ----  ----                -------
+  Normal  EnsuringLoadBalancer    11m   service-controller  Ensuring load balancer
+  Normal  SuccessfullyReconciled  11m   service             Successfully reconciled
+
+In the output shown above,
+
+The service got assigned a service virtual IP address, which is 10.100.149.80.
+LoadBalancer Ingress is the field where you can see the AWS Elastic Load Balancer DNS name. This info is automatically queried by the Kubernetes from the Amazon EC2 API interface and as a result this field is populated.
+Note that the name given to the load balncer in the annotation mynlb is chosen as the string used in the actual DNS name. (instead of the service name frontendlb)
+Since the actual value of the NodePort is not explicitly configured in the manifest in the previous step, a random port is picked, which is 31603 in this case. However you will see below if that port is being used or not by the AWS Elastic Load Balancer.
+Since there are three IP addresses in the list of endpoints, that means three pods got selected for this service based on their labels matching the selector. (app=frontend) As mentioned in the introduction section, the endpoints controller automatically added those pod’ s IP addresses to the list in the endpoints object.
+
+4.4. Review the AWS Network Load Balancer Configuration
+Let’ s see what specific elements have been configured on the AWS Application Load Balancer by the AWS Load Balancer Controller. Click on the Listeners tab to see the details about the Listeners configuration on the load balancer.
+
+As shown above, TCP port 80 is provisioned by the AWS Load Balancer Controller based on the definitions in the Kubernetes Service . In the default action column to the right, there is a target group  configured. Notice that the target group name has a format of k8s-<k8s-namespace-name>-<k8s-service-name>-randomstring ; however the names are truncated to eight characters. Let’ s check the target group details.
+
+As you can see above, this time, rather than the node IPs, it is the pod IP addresses which are registered as targets and the nodeport, which is automatically configured on the Kubernetes side, is not used by AWS Network Load Balancer. This is because we used the service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip annotation in the service. This feature enables a few capabilities such as :
+
+Applying health checks directly against the pods (rather than the nodes)
+AWS Network Load Balancer does not use the node port 31603 at all.
+Avoiding all the the extra forwarding steps that involves additional destination network address translations (DNAT) on the Kubernetes node receiving the traffic (which is the destination IP address field in the IP header of the packet being changed from the node IP address to the service virtual IP address and then once again from service virtual IP address to one of the pod’ s IP address)
+Being able to use this service in on AWS Fargate
+Note that if you want to want implement AWS Elastic Load Balancer leveraging node ports of the EC2 instances instead (as demonstrated in the previous section with Classic Load Balancer) then it can be achieved either by not using the aws-load-balancer-nlb-target-typeannotation at all or using it with instance data value. (also called mode instance versus mode ip)
+
+4.5. Environment Summary
+
+An important thing to note here is that since the frontendnlb service type is LoadBalancer, the node port on the nodes has to be always exposed in Kubernetes by design (although the targetport at pod level is used by the Network Load Balancer as a target). However any access to the node port is blocked by default thanks to the AWS Security Group associated with the Worker Node’ s network interface. (EC2 elastic network interface - ENI)
+
+4.6. Reachability Test
+Let’ s test whether we can access the frontendnlb service from an external client.
+
+Open up a new browser tab on your computer or Cloud9 IDE and navigate to the DNS name of the service, which is mynlb-05bd20beb193d21f.elb.eu-west-1.amazonaws.com.
+
+One other aspect of the frontendnlb service is that, as highlighted earlier, it still has a service virtual IP (also called Cluster-IP) tied to it. Hence the service is actually accessible within the cluster on its DNS name which is frontendnlb.workshop.svc.cluster.local or virtual IP which is 10.100.149.80. Let’ s verify that, by getting a shell either to the prodcatalog or proddetail pod. Run the below command to exec into the pod.
+
+prodcatalogpod=$(kubectl get pods -n workshop | awk '{print $1}' | grep -e "prodcatalog")
+kubectl exec -it $prodcatalogpod -n workshop -- sh
+
+Output
+
+#
+In the same shell, let' s investigate the reachability to the proddetail service using curl.
+curl frontendnlb
+
+Output
+
+<!-- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. -->
+<!-- SPDX-License-Identifier: MIT-0 -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+|
+OUTPUT OMITTED
+|
+  </body>
+</html>
+Note : You do not need to type in the whole DNS name since workshop.svc.cluster.local is one of the search domains that is automatically configured by Kubernetes DNS on each pod. You can verify this by displaying the content of the /etc/resolv.conf file on the pod.
+
+Exit from the pod' s shell by typing exit.
+
+In summary, the specific Kubernetes annotations we used in the service manifest made it possible for AWS Load Balancer to implement these additional capabilities by sending API calls to AWS EC2 API and instantiate an AWS Network Load Balancer with specific configuration parameters. Please see the full list of various annotations  that can enable specific features on AWS Network Load Balancer.
+
+5. Load Balancer Summary
+In this Load Balancer section we have explored exposing our TCP based application in the form of a Kubernetes service to clients external to the cluster by leveraging AWS cloud native Elastic Load Balancers. With this model, an individual node port is allocated and an Elastic Load Balancer is instantiated per service. This would create cost implications when you need to expose many web applications in the Kubernetes cluster to external clients cause it will map to that many individual Elastic Load Balancers in the AWS cloud.
+
+If the applications are based on http/https then there is a better way of making all of those applications accessible to the external clients by defining a centralized construct called Ingress. That is what we are going to explore and demonstrate in the next section.
+
+6. Cleanup
+Delete the frontendnlb service.
+
+kubectl delete service frontendnlb -n workshop
+
+Output
+
+service "frontendnlb" deleted
+Also verify that the Network Load Balancer (provisioned for this service) is also deleted in Amazon EC2 console.

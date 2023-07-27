@@ -1,0 +1,1 @@
+https://medium.com/@badawekoo/harden-kubernetes-cluster-with-pod-and-container-security-contexts-119639dbb6ce

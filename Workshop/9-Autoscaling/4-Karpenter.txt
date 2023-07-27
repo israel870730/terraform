@@ -1,0 +1,279 @@
+Karpenter
+
+Pre-requisite
+Make sure you have followed the pre-requisite from chapter Autoscaling on helm application deployment and eks-node-viewer.
+
+It is recommended not to use Kubernetes Cluster Autoscaler at the same time as Karpenter because it can happen that both systems scale up nodes in response to unschedulable pods. So if you have completed Cluster Autoscaler chapter, ensure you have completed the clean up as well.
+
+Also if you have completed only HPA chapter and skipped Cluster Autoscaler chapter, ensure you have completed the HPA clean up as well.
+
+Karpenter Installation
+The below installation steps are curated from Karpenter Getting Started (https://karpenter.sh/v0.27.5/getting-started/) documentation.
+
+1. Set env variables
+
+export CLUSTER_NAME=$(eksctl get clusters -o json | jq -r '.[0].Name')
+export AWS_REGION=$(curl -s 169.254.169.254/latest/dynamic/instance-identity/document | jq -r '.region')
+export AWS_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+export CLUSTER_ENDPOINT="$(aws eks describe-cluster --name ${CLUSTER_NAME} --query "cluster.endpoint" --output text)"
+
+echo Cluster Name:$CLUSTER_NAME AWS Region:$AWS_REGION Account ID:$AWS_ACCOUNT_ID Cluster Endpoint:$CLUSTER_ENDPOINT
+
+2. Create the IAM Role and Instance profile for Karpenter Nodes
+Instances launched by Karpenter must run with an InstanceProfile that grants permissions necessary to run containers and configure networking. Karpenter discovers the InstanceProfile using the name KarpenterNodeRole-${ClusterName}.
+TEMPOUT=$(mktemp)
+
+curl -fsSL https://karpenter.sh/docs/getting-started/getting-started-with-karpenter/cloudformation.yaml  > $TEMPOUT \
+&& aws cloudformation deploy \
+  --stack-name "Karpenter-${CLUSTER_NAME}" \
+  --template-file "${TEMPOUT}" \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --parameter-overrides "ClusterName=${CLUSTER_NAME}"
+
+
+This step may take about 2 minutes. In the meantime, you can download the file and check the content of the CloudFormation Stack. Check how the stack defines a policy, a role and and Instance profile that will be used to associate to the instances launched. You can also head to the CloudFormation console and check which resources does the stack deploy.
+3. Add the Karpenter node role to the aws-auth configmap
+Grant access to instances using the profile to connect to the cluster. This command adds the Karpenter node role to your aws-auth configmap, allowing nodes with this role to connect to the cluster.
+eksctl create iamidentitymapping \
+  --username system:node:{{EC2PrivateDNSName}} \
+  --cluster "${CLUSTER_NAME}" \
+  --arn "arn:aws:iam::${AWS_ACCOUNT_ID}:role/KarpenterNodeRole-${CLUSTER_NAME}" \
+  --group system:bootstrappers \
+  --group system:nodes
+
+You can verify the entry is now in the AWS auth map by running the following command.
+kubectl describe configmap -n kube-system aws-auth
+
+4. Create KarpenterController IAM Role
+(If not already done) Before adding the IAM Role for the service account we need to create the IAM OIDC Identity Provider for the cluster.
+
+eksctl utils associate-iam-oidc-provider --cluster ${CLUSTER_NAME} --approve
+
+Create a Kubernetes service account and AWS IAM Role, and associate them using IRSA to let Karpenter launch instances.
+eksctl create iamserviceaccount \
+  --cluster "${CLUSTER_NAME}" --name karpenter --namespace karpenter \
+  --role-name "${CLUSTER_NAME}-karpenter" \
+  --attach-policy-arn "arn:aws:iam::${AWS_ACCOUNT_ID}:policy/KarpenterControllerPolicy-${CLUSTER_NAME}" \
+  --role-only \
+  --approve
+
+export KARPENTER_IAM_ROLE_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/${CLUSTER_NAME}-karpenter"
+
+You can confirm the IAM service account has been created by running:
+eksctl get iamserviceaccount --cluster $CLUSTER_NAME --namespace karpenter    
+
+5. Create the EC2 Spot Service Linked Role
+This step is only necessary if this is the first time you’re using EC2 Spot in this account. More details are available here .
+
+If the role has already been successfully created, you will see an error occurred (InvalidInput) when calling the CreateServiceLinkedRole operation: Service role name AWSServiceRoleForEC2Spot has been taken in this account, please try a different suffix.
+aws iam create-service-linked-role --aws-service-name spot.amazonaws.com || true
+
+6. Install Karpenter using Helm
+In this section we will install Karpenter and learn how to configure a default Provisioner CRD to set the configuration. Karpenter is installed in clusters with a helm  chart. Karpenter follows best practices for kubernetes controllers for its configuration. Karpenter uses Custom Resource Definition(CRD)  to declare its configuration. Custom Resources are extensions of the Kubernetes API. One of the premises of Kubernetes is the declarative aspect of its APIs . Karpenter similifies its configuration by adhering to that principle.
+
+We will use helm to deploy Karpenter to the cluster. The latest Karpenter version can be found here (https://github.com/aws/karpenter/releases). You can set the latest version in the below command.
+
+Replace the "LATEST_XXXX" with latest Karpenter version in below command.
+
+Do not proceed further without setting the environment variable $KARPENTER_VERSION to the latest Karpenter version which you can find from here 
+
+echo Your Karpenter version is: $KARPENTER_VERSION
+docker logout public.ecr.aws
+helm upgrade --install karpenter oci://public.ecr.aws/karpenter/karpenter --version ${KARPENTER_VERSION} --namespace karpenter --create-namespace \
+  --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=${KARPENTER_IAM_ROLE_ARN} \
+  --set settings.aws.clusterName=${CLUSTER_NAME} \
+  --set settings.aws.clusterEndpoint=${CLUSTER_ENDPOINT} \
+  --set settings.aws.defaultInstanceProfile=KarpenterNodeInstanceProfile-${CLUSTER_NAME} \
+  --set settings.aws.interruptionQueueName=${CLUSTER_NAME} \
+  --wait
+
+If you receive error because of upgrade in Karpenter version, please check for current version here (https://github.com/aws/karpenter/releases) and set KARPENTER_VERSION to upgraded version. Rerun the above command should resolve the Karpenter version issue.
+
+The command above:
+
+Uses the both the CLUSTER_NAME and the CLUSTER_ENDPOINT so that Karpenter controller can contact the Cluster API Server.
+Karpenter configuration is provided through a Custom Resource Definition. We will be learning about providers in the next section, the --wait notifies the webhook controller to wait until the Provisioner CRD has been deployed.
+
+Check karpenter version by using helm list command.
+helm list -n karpenter
+
+NAME            NAMESPACE       REVISION        UPDATED                                 STATUS          CHART                   APP VERSION
+karpenter       karpenter       1               2022-08-26 22:03:24.607926754 +0000 UTC deployed        karpenter-0.23.0        0.23.0  
+
+To check Karpenter is running you can check the Pods, Deployment and Service are Running.
+
+To check running pods run the command below. There should be at least two pods karpenter-controller and karpenter-webhook
+kubectl get pods --namespace karpenter
+
+NAME                         READY   STATUS    RESTARTS   AGE
+karpenter-59ffb55668-dt4jl   1/1     Running   0          3m26s
+karpenter-59ffb55668-kdj5j   1/1     Running   0          3m26s
+
+To check the deployment run the command below. There should be only one deployment Karpenter.
+kubectl get deployment -n karpenter
+
+NAME        READY   UP-TO-DATE   AVAILABLE   AGE
+karpenter   2/2     2            2           4m27s
+Set up the Provisioner
+Karpenter configuration comes in the form of a Provisioner CRD (Custom Resource Definition) and defines a Custom Resource called a Provisioner to specify provisioning configuration. Provisioner defines how Karpenter manages unschedulable pods and expires nodes. A single Karpenter provisioner is capable of handling many different pod shapes. Karpenter makes scheduling and provisioning decisions based on pod attributes such as labels and affinity. A cluster may have more than one Provisioner, but for the moment we will declare just one the default Provisioner 
+
+One of the main objectives of Karpenter is to simplify the management of capacity. If you are familiar with other Auto Scalers, you will notice Karpenter takes a different approach referred as group-less auto scaling which means Karpenter does not manipulate AutoscalingGroups (ASGs), it handles the instances directly. Karpenter’s job is to add nodes to handle unschedulable pods, and to schedule pods on those nodes, and remove the nodes when they are not needed. Karpenter only attempts to provision pods when Kubernetes scheduler sets status condition Unschedulable=True when it fails to find a node that will fit the pod and pod is marked as Pending and Unschedulable. Karpenter evaluates the resources and constraints of the Unschedulable pods against the available Provisioners and creates matching EC2 instances which then joins the cluster.
+
+The provisioner can use Kubernetes labels to allow pods to request only certain instance types, architectures, operating systems, or other attributes when creating nodes. We can also [Deprovisioned]((https://karpenter.sh/docs/concepts/deprovisioning/ ) our nodes using karpenter by setting time-to-live value after a set amount of time from when teh nodes were created or after they dont have any deployed pods. You can create multiple provisioners for a cluster used by different teams who may have requirement on nodes using BottleRocket or other EKS Optimizer AMI.
+
+Let’s deploy the following configuration:
+
+Install provisioner as below
+cat <<EOF | kubectl apply -f -
+apiVersion: karpenter.sh/v1alpha5
+kind: Provisioner
+metadata:
+  name: default
+spec:
+  # References cloud provider-specific custom resource, see your cloud provider specific documentation
+  providerRef:
+    name: default
+  ttlSecondsAfterEmpty: 30
+
+  # Labels are arbitrary key-values that are applied to all nodes
+  labels:
+    eks-immersion-team: my-team
+
+  # Requirements that constrain the parameters of provisioned nodes.
+  # These requirements are combined with pod.spec.affinity.nodeAffinity rules.
+  # Operators { In, NotIn } are supported to enable including or excluding values
+  requirements:
+    - key: "karpenter.k8s.aws/instance-category"
+      operator: In
+      values: ["c", "m"]
+    - key: "kubernetes.io/arch"
+      operator: In
+      values: ["amd64"]
+    - key: "karpenter.sh/capacity-type" # If not included, the webhook for the AWS cloud provider will default to on-demand
+      operator: In
+      values: ["on-demand"]
+  limits:
+    resources:
+      cpu: "5"
+    
+  # Enables consolidation which attempts to reduce cluster cost by both removing un-needed nodes and down-sizing those
+  # that can't be removed.  Mutually exclusive with the ttlSecondsAfterEmpty parameter.
+  consolidation:
+    enabled: false
+---
+apiVersion: karpenter.k8s.aws/v1alpha1
+kind: AWSNodeTemplate
+metadata:
+  name: default
+spec:
+  subnetSelector:
+      alpha.eksctl.io/cluster-name: ${CLUSTER_NAME}
+  securityGroupSelector:
+      alpha.eksctl.io/cluster-name: ${CLUSTER_NAME} 
+  tags:
+    managed-by: "karpenter"
+    intent: "apps"         
+EOF
+
+Below is the detail on the configuration used for this provider:
+
+Instance Profile: Instances launched by Karpenter must run with an InstanceProfile that grants permissions necessary to run containers and configure networking.
+Requirements Section: The Provisioner CRD supports defining node properties like instance type and zone. For example, in response to a label of node.kubernetes.io/instance-type, Karpenter will provision nodes of that Instance Types only.
+ttlSecondsAfterEmpty: value configures Karpenter to terminate empty nodes. This behavior can be disabled by leaving the value undefined. In this case we have set it for a quick demonstration to a value of 30 seconds.
+AWSNodeTemplate : Node Templates enable configuration of AWS specific settings. Each provisioner must reference an AWSNodeTemplate using spec.providerRef.
+Automatic Node Provisioning
+
+We are now ready to scale our cluster. Let's scale the proddetail replicas to 25
+kubectl scale --replicas=25 deployment/proddetail -n workshop
+
+Output is below
+
+deployment.apps/proddetail scaled
+Open new terminal and execute below command. Some pods will be in the Pending state, which triggers the karpenter controller to scale out the EC2 fleet.
+
+You can watch the pods starting using k9s
+kubectl get pods -l app=proddetail -n workshop -o wide --watch
+
+you should see some of the pods are in pending state
+
+proddetail-745889bdf7-s9fxk   1/1     Running   0          8m10s   192.168.86.50   ip-192-168-91-zzz.us-west-2.compute.internal   <none>           <none>
+proddetail-745889bdf7-5vw7m   0/1     Pending   0          0s      <none>          <none>                                         <none>           <none>
+proddetail-745889bdf7-5vw7m   0/1     Pending   0          0s      <none>          ip-192-168-5-xxx.us-west-2.compute.internal    <none>           <none>
+proddetail-745889bdf7-fl8jv   0/1     Pending   0          0s      <none>          <none>                                         <none>           <none>
+proddetail-745889bdf7-tpmwm   0/1     Pending   0          0s      <none>          <none>                                         <none>           <none>
+proddetail-745889bdf7-5vw7m   0/1     ContainerCreating   0          0s      <none>          ip-192-168-5-xxx.us-west-2.compute.internal    <none>           <none>
+proddetail-745889bdf7-fl8jv   0/1     Pending             0          0s      <none>          ip-192-168-53-yyy.us-west-2.compute.internal    <none>           <none>
+proddetail-745889bdf7-tpmwm   0/1     Pending             0          0s      <none>          ip-192-168-5-xxx.us-west-2.compute.internal    <none>           <none>
+proddetail-745889bdf7-fl8jv   0/1     ContainerCreating   0          0s      <none>          ip-192-168-53-yyy.us-west-2.compute.internal    <none>           <none>
+proddetail-745889bdf7-tpmwm   0/1     ContainerCreating   0          0s      <none>          ip-192-168-5-xxx.us-west-2.compute.internal    <none>           <none>
+proddetail-745889bdf7-nhm8t   0/1     Pending             0          0s      <none>          <none>                                         <none>           <none>
+proddetail-745889bdf7-872nz   0/1     Pending             0          0s      <none>          <none>    
+
+You can verify the replicas of proddetail deployment
+kubectl get deployment/proddetail -n workshop
+
+NAME         READY   UP-TO-DATE   AVAILABLE   AGE
+proddetail   25/25   25           25          11m
+You can also check the nodes in the cluster now. You should see 4 nodes.
+
+kgn
+
+NAME                              STATUS   ROLES    AGE     VERSION                ARCH    CAPACITYTYPE   INSTANCE-TYPE   NODEGROUP   ZONE         PROVISIONER-NAME   CAPACITY-TYPE
+ip-192-168-166-122.ec2.internal   Ready    <none>   2m14s   v1.24.7-eks-fb459a0   amd64                  m5.2xlarge                  us-east-1c   default            on-demand
+ip-192-168-21-142.ec2.internal    Ready    <none>   26m     v1.24.7-eks-fb459a0   amd64   ON_DEMAND      m5.large        nodegroup   us-east-1a                      
+ip-192-168-39-78.ec2.internal     Ready    <none>   26m     v1.24.7-eks-fb459a0   amd64   ON_DEMAND      m5.large        nodegroup   us-east-1b                      
+ip-192-168-79-243.ec2.internal    Ready    <none>   26m     v1.24.7-eks-fb459a0   amd64   ON_DEMAND      m5.large        nodegroup   us-east-1c
+
+You can also see the new node coming up in the eks-node-viewer
+
+Scale down ReplicaSet for cleanup
+
+Let's scale down the proddetail replica back to 1
+kubectl scale --replicas=1 deployment/proddetail -n workshop
+
+Output is as below:
+
+deployment.apps/proddetail scaled
+Displaying Karpenter Logs
+
+To read Karpenter logs from the console you can run the following command.
+kubectl logs -f deployment/karpenter -c controller -n karpenter
+
+2023-01-27T22:25:01.696Z        INFO    controller.provisioner  launching node with 10 pods requesting {"cpu":"2125m","memory":"5Gi","pods":"12"} from types m6idn.xlarge, m5d.xlarge, c5.xlarge, m5ad.xlarge, c6id.xlarge and 22 other(s)      {"commit": "5a7faa0-dirty", "provisioner": "default"}
+2023-01-27T22:25:02.018Z        DEBUG   controller.provisioner.cloudprovider    discovered security groups      {"commit": "5a7faa0-dirty", "provisioner": "default", "security-groups": ["sg-05713b32266e6c3be", "sg-07d0618d9940a5496"]}
+2023-01-27T22:25:02.021Z        DEBUG   controller.provisioner.cloudprovider    discovered kubernetes version   {"commit": "5a7faa0-dirty", "provisioner": "default", "kubernetes-version": "1.24"}
+2023-01-27T22:25:02.072Z        DEBUG   controller.provisioner.cloudprovider    discovered new ami      {"commit": "5a7faa0-dirty", "provisioner": "default", "ami": "ami-06c9b6a12f5bd0a96", "query": "/aws/service/eks/optimized-ami/1.24/amazon-linux-2/recommended/image_id"}
+2023-01-27T22:25:02.296Z        DEBUG   controller.provisioner.cloudprovider    created launch template {"commit": "5a7faa0-dirty", "provisioner": "default", "launch-template-name": "Karpenter-eksworkshop-eksctl-18119396022714338142", "launch-template-id": "lt-0d9386c61d300fd28"}
+2023-01-27T22:25:04.691Z        INFO    controller.provisioner.cloudprovider    launched new instance   {"commit": "5a7faa0-dirty", "provisioner": "default", "id": "i-0d081e1c21cc88937", "hostname": "ip-192-168-2-211.ec2.internal", "instance-type": "c6a.xlarge", "zone": "us-east-1a", "capacity-type": "on-demand"}
+
+2023-01-27T22:29:16.662Z        INFO    controller.node added TTL to empty node {"commit": "5a7faa0-dirty", "node": "ip-192-168-2-211.ec2.internal"}
+2023-01-27T22:29:55.115Z        INFO    controller.deprovisioning       deprovisioning via emptiness delete, terminating 1 nodes ip-192-168-2-211.ec2.internal/c6a.xlarge/on-demand     {"commit": "5a7faa0-dirty"}
+2023-01-27T22:29:55.176Z        INFO    controller.termination  cordoned node   {"commit": "5a7faa0-dirty", "node": "ip-192-168-2-211.ec2.internal"}
+2023-01-27T22:29:55.391Z        INFO    controller.termination  deleted node    {"commit": "5a7faa0-dirty", "node": "ip-192-168-2-211.ec2.internal"}
+
+Now you should see only three nodes
+kgn
+
+NAME                                            STATUS   ROLES    AGE     VERSION               ARCH    CAPACITYTYPE   INSTANCE-TYPE   NODEGROUP   ZONE        
+ip-192-168-16-16.eu-west-1.compute.internal     Ready    <none>   6h42m   v1.24.7-eks-fb459a0    amd64   ON_DEMAND      m5.large        workshop    eu-west-1a                      
+ip-192-168-51-191.eu-west-1.compute.internal    Ready    <none>   24h     v1.24.7-eks-fb459a0   amd64   ON_DEMAND      m5.large        workshop    eu-west-1b                      
+ip-192-168-83-52.eu-west-1.compute.internal     Ready    <none>   24h     v1.24.7-eks-fb459a0   amd64   ON_DEMAND      m5.large        workshop    eu-west-1c  
+And you should see the pods have been scaled down
+
+eks-node-viewer
+
+Cleanup
+Below commands will remove karpenter setup
+
+export CLUSTER_NAME=$(eksctl get clusters -o json | jq -r '.[0].Name')
+helm uninstall karpenter --namespace karpenter
+eksctl delete iamserviceaccount --cluster ${CLUSTER_NAME} --name karpenter --namespace karpenter
+aws cloudformation delete-stack --stack-name Karpenter-${CLUSTER_NAME}
+aws ec2 describe-launch-templates \
+    | jq -r ".LaunchTemplates[].LaunchTemplateName" \
+    | grep -i Karpenter-${CLUSTER_NAME} \
+    | xargs -I{} aws ec2 delete-launch-template --launch-template-name {}
+
+kubectl delete ns karpenter 
+kubectl delete provisioners.karpenter.sh default
+kubectl delete awsnodetemplate default

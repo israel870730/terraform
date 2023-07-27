@@ -1,0 +1,332 @@
+Ingress is a Kubernetes object that enables you to expose Kubernetes services to clients external to the Kubernetes cluster.
+
+Ingress (https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.25/#ingress-v1-networking-k8s-io) exposes HTTP and HTTPS routes from outside the cluster to services within the cluster. Traffic routing is controlled by rules defined on the Ingress resource.
+
+An Ingress may be configured to give Services externally-reachable URLs, load balance traffic, terminate SSL / TLS, and offer name-based virtual hosting.
+
+To learn more detail on Ingress features please click on the arrow to expand
+1. High Level Architecture of Ingress
+High level diagram of the architecture is shown below.
+
+Couple of things to mention :
+
+Two HTTP path based rules are defined in Kubernetes Ingress object. Thanks to the AWS Load Balancer Controller, it detects the Ingress object and sends API calls to AWS EC2 API and then the rules get implemented as configuration parameters on the AWS Application Load Balancer, also shown at the top of the diagram.
+Target groups are AWS Application Load Balancer native configuration elements which are used in order for to send any incoming traffic to the right backend in the Kubernetes cluster.
+Above diagram shows an example of HTTP path based routing. An HTTP rule as /* can also be configured in this example but it is not shown for simplicity.
+Notice that Application Load Balancer (just like Network Load Balancer) supports both target type IP and target type Instance. The interesting point here is that for target type IP, the service in the Kubernetes cluster does not even have to be of type Load Balancer and/or NodePort; it can be just ClusterIP. Reason being is that with target type IP the AWS Application Load Balancer does not even send the traffic to the worker node on NodePort, it simply uses the pod IPs as shown earlier in the Network Load Balancer section. Simply put, Service A above does not have to be of type NodePort. This will be highlighted again later in the Review the Application Load Balancer Configuration section.
+Ingress and Service are completely separate and decoupled constructs in Kubernetes, providing flexibility and also enabling you to manage and maintain them independently.
+You can also define HTTPS based Ingress to secure your traffic.
+
+2. Pre-requisite
+Make sure you have successfully installed the AWS Load Balancer Controller by following the steps outlined in the AWS Load Balancer Controller part in the Load Balancer section; as it is a requirement to use AWS Application Load Balancers.
+
+3. AWS Load Balancer Controller Features
+Some of the key features of AWS Load Balancer Controller are:
+
+Share Application Load Balancers(ALBs) with multiple Kubernetes Ingress resources
+Network Load Balancers(NLB) for Kubernetes services
+Support TargetGroupBinding custom resource
+Support for fully private clusters
+
+The above diagram shows the resources that AWS Load Balancer Controller creates.
+
+In order to create AWS resources such as Application Load Balancer, Listeners and TargetGroups, the AWS Load Balancer Controller needs to be installed first in your EKS cluster.
+
+Once the controller is installed, it watches for Ingress events from the API server. Once it finds Ingress resources, it starts creating AWS resources such as the Application Load Balancer(ALB), Listeners, TargetGroups and Ingress Rules.
+Target groups are created in AWS for each unique Kubernetes service mentioned in Ingress resource.
+Listeners are created for each port configured in Ingress resource annotations . If this annotation is not found in Ingress, then default values are used. For instance, Port 80 is used for HTTP traffic and Port 443 is used for HTTPS traffic.
+Ingress Rules are created for each path in Ingress resource definition.
+
+4. Create Ingress Class
+By default, if you have deployed multiple Ingress Controllers in the Kubernetes cluster, then whenever you create an Ingress, a race condition will occur between all those controllers in which each controller tries to update Ingress status fields. Hence Kubernetes provides the capability where different Ingresses can be implemented by different Ingress controllers. This is achieved by using IngressClass.
+
+IngressClass contains the configuration specifying which Ingress Controller should implement the class. It can also optionally specify additional implementation-specific configuration, to enforce settings on Ingresses, through the use of IngressClassParams . (which is basically a Kubernetes Custom Resource Definition - CRD ) We will keep it simple in this example and not use any specific configuration parameters.
+
+So let’ s create the Ingress Class named aws-alb.
+cat <<EOF | kubectl create -f -
+apiVersion: networking.k8s.io/v1
+kind: IngressClass 
+metadata:
+  name: aws-alb
+spec:
+  controller: ingress.k8s.aws/alb #Defines the controller name which implements this IngressClass. By default AWS Load Balancer Controller uses and checks this controller name. 
+EOF
+
+Output
+
+ingressclass.networking.k8s.io/aws-alb created
+
+Let’ s verify the IngressClass.
+kubectl get ingressclass
+
+Output
+
+NAME      CONTROLLER            PARAMETERS   AGE
+aws-alb   ingress.k8s.aws/alb   <none>       8m54s
+This IngressClass is now available for the whole cluster. What we are going to do next is referencing this IngressClass in the Ingress manifest.
+
+5. Create Ingress
+In this section, we are going to create an Ingress which will define the forwarding rules for the traffic destined to the application. Let’ s use the below manifest and create the Ingress.
+
+cat <<EOF | kubectl apply -f -
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  namespace: workshop
+  name: workshopingress
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing #Places the load balancer on public subnets
+    alb.ingress.kubernetes.io/target-type: ip #The Pod IPs should be used as the target IPs (rather than the node IPs as was the case with NLB in hte previous section)
+    alb.ingress.kubernetes.io/group.name: product-catalog # Groups multiple Ingress resources
+spec:
+  ingressClassName: aws-alb #Defines which IngessClass that this Ingress is associated with. This specific Ingress Class is owned by  AWS Load Balancer Controller. Hence it will fulfill this Ingress.
+  rules:
+  - http:
+      paths:
+      - path: /new
+        pathType: Prefix
+        backend:
+          service:
+            name: frontendnew
+            port:
+               number: 80
+  - http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend
+            port:
+              number: 80
+EOF
+
+Output
+
+ingress.networking.k8s.io/workshopingress created
+In the above manifest,
+
+User defined name for this ingress is configured as workshopingress.
+
+Three annotations are used.
+
+The first annotation internet-facing means that the load balancer should be placed in a public subnet and be able to receive traffic from the internet.
+The second annotation ip means that the target that the AWS load balancer should use the IP address of the Pods (rather than the nodes as was the case in the previous Network Load Balancer section) . This way not only Amazon EC2 but AWS Fargate is also supported as well.
+The third annotation alb.ingress.kubernetes.io/group.name is used to group multiple Ingress resources. This is useful when you want to share a single ALB with more than one Ingress resources in your cluster. We will walk through a sample use case for this scenario in the next chapter.
+Ingressclassname specified is the Ingress Class that we created in the previous step so that this Ingress is fulfilled by the AWS Load Balancer Controller.
+
+There is a rules section in which HTTP rules are configured based on hostname or path. Each rule would point out to a backend which basically is an existing Kubernetes service in the cluster. There are two HTTP path based rules defined in this ingress.
+
+The first rule is to route all the requests, that contains /new path in the prefix, to the Kubernetes service called frontendnew on port 80. We will be demonstrating a new imaginary version of the Product Catalog Application with the a new Kubernetes service called frontendnew. (alongside a deployment called frontendnew)
+The second rule is to route all the other requests to the existing Kubernetes service called frontend on port 80.
+The more specific path based rule is configured first as it will be fulfilled as the first rule on the AWS Application Load Balancer as well. For detailed information on how path based rules are processed, have a look at Ingress Rules  in Kubernetes project page and also in Listener rules  for your Application Load Balancer in AWS Documentation.
+Let’s check if anything has changed on the Load Balancers list in the EC2 Console.
+
+As shown above, a new AWS Application Load Balancer got provisioned to fulfill this Ingress. Note that the DNS name in your environment will be different.
+
+Note : It takes at least a few minutes for the load balancer to appear in the list. Make sure the state is active under the Basic Configuration section shown in the above screenshot.
+
+In this case,
+
+AWS Load Balancer Controller fulfills the control plane aspect of Ingress Controller, by acting upon the creation of an Ingress. It then provisioned an AWS Application Load Balancer.
+AWS Application Load Balancer fulfills the data plane aspect of Ingress Controller acting as the load balancer to route http requests to the appropriate backend service.
+Let’ s review the state of Ingress in the Kubernetes cluster next.
+
+6. Review Ingress
+
+Let’ s verify the Ingress in Kubernetes.
+kubectl get ingress -n workshop
+
+Output
+
+NAME              CLASS     HOSTS   ADDRESS                                                                PORTS   AGE
+workshopingress   aws-alb   *       k8s-productcatalog-ec87bdf649-1995935763.eu-west-1.elb.amazonaws.com   80      30m
+You can verify the DNS name that you see in the ADDRESS field of the workshopingress above, to the DNS name that you have seen in the EC2 console in the previous step. They both should be the same, in this case it is k8s-productcatalog-ec87bdf649-1995935763.eu-west-1.elb.amazonaws.com.
+
+Let’ s review the properties of the workshopingress .
+kubectl describe ingress workshopingress -n workshop
+
+Output
+
+Name:             workshopingress
+Namespace:        workshop
+Address:          k8s-productcatalog-ec87bdf649-1995935763.eu-west-1.elb.amazonaws.com
+Default backend:  default-http-backend:80 (<error: endpoints "default-http-backend" not found>)
+Rules:
+  Host        Path  Backends
+  ----        ----  --------
+  *           
+              /new   frontendnew:80 (<error: endpoints "frontendnew" not found>)
+  *           
+              /   frontend:80 (192.168.55.37:9000,192.168.66.93:9000,192.168.74.119:9000)
+Annotations:  alb.ingress.kubernetes.io/group.name: product-catalog
+              alb.ingress.kubernetes.io/scheme: internet-facing
+              alb.ingress.kubernetes.io/target-type: ip
+Events:
+  Type    Reason                  Age                From     Message
+  ----    ------                  ----               ----     -------
+  Normal  SuccessfullyReconciled  36m (x2 over 40m)  ingress  Successfully reconciled
+In the output shown above,
+
+You can ignore the warning message.
+The name of the Ingress and the DNS name is shown.
+The default backend appears as not found. This is because it is not configured within the manifest used in the previous section. Default backend is leveraged only when the actual http requests do not match any of the path rules defined in the Ingress rules. Since the second path rule basically covers all the requests (by /) there is no need to use a default backend in this case.
+In the rules section you can see that :
+The endpoints, for the backend service called frontend, are successfully identified and populated
+The endpoints, for the backend service called frontendnew, cannot be found. This is because the frontendnew service (which will be a new imaginary version of the Product Catalog Application) is not created yet.
+7. Review the AWS Application Load Balancer Configuration
+Let’ s see what specific elements have been configured on the AWS Application Load Balancer by the AWS Load Balancer Controller. Click on the Listeners tab to see the details about the Listeners configuration on the load balancer.
+
+As you can see HTTP on port 80 is provisioned based on the definitions in the Ingress in Kubernetes. In the rules column to the right, it can be seen that default is returning fixed response on 404 which basically corresponds to the “Default Backend” definition in the Ingress, which we have not configured in the manifest. Let’ s dive deeper; click on View/edit rules.
+
+We can see that the last rule actually corresponds to the missing default backend that we did not configure in the Ingress manifest; and the two rules we defined are reflected here on the AWS Application Load Balancer.
+
+The first rule returns fixed response with 503 error since the backend service is not configured in Kubernetes yet. You can see this detail by clicking the hyperlink "more..." (next to 503), which would bring up the page shown below.
+
+The second rule is routing the requests to a target group. Notice that the target group name has a format of k8s-<k8s-namespace-name>-<k8s-backend-service-name>-randomstring; however the names are truncated to eight characters. Let’ s check the target group details. Note that this will open up a new tab in your browser so do not forget to close the tab when you want to get back to the Listeners view.
+
+The IP addresses of the Pods, which are backing the Kubernetes service called frontend, are the targets in this target group. This is because we used the alb.ingress.kubernetes.io/target-type: ip annotation in the ingress. By using this annotation, the actual backend service, in this case the Kubernetes service called frontend does not even need to be of type LoadBalancer and/or NodePort. We will verify this by creating the missing Kubernetes service called frontendnew in the next section.
+
+At this stage you should be able to access the Product Catalog Application by navigating to the Application Load Balancer DNS name without any specific paths. These requests simply match the second http rule defined in the Ingress. Let’ s verify that.
+
+As seen above, we are able to access the application. Note that if you have tried to add products on this page while doing the previous labs then the page that you see might be slightly different.
+
+In the next two sections we will create the new version of this application and then see if the http requests with the /new path defined are routed successfully by the Ingress to the new service.
+
+8. Create Deployment frontendnew and Service frontendnew
+
+We will now deploy a new imaginary version of the Product Catalog Application. To accomplish this we will create a new deployment called frontendnew and the pods in this deployment will be backing a new service called frontendnew which will be a ClusterIP type of service.
+cat <<EOF | kubectl apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontendnew
+  namespace: workshop
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: frontendnew
+  template:
+    metadata:
+      labels:
+        app: frontendnew
+    spec:
+      containers:
+      - image: public.ecr.aws/u2g6w7p2/eks-workshop-demo/simplewebserver:1.0
+        name: simplewebserver
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontendnew
+  namespace: workshop
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80 
+      name: http 
+  selector:
+    app: frontendnew
+EOF
+
+Output
+
+deployment.apps/frontendnew created
+service/frontendnew created
+
+Let’ s verify the newly created deployment and the service.
+kubectl get svc,deployment -n workshop
+
+Output
+
+NAME                  TYPE           CLUSTER-IP       EXTERNAL-IP                                                               PORT(S)        AGE
+service/frontend      LoadBalancer   10.100.38.226    ac461b60fdb464afeb0805598760c620-1326466164.eu-west-1.elb.amazonaws.com   80:30583/TCP   35d
+service/frontendnew   ClusterIP      10.100.200.249   <none>                                                                    80/TCP         5m36s
+service/prodcatalog   ClusterIP      10.100.14.157    <none>                                                                    5000/TCP       35d
+service/proddetail    ClusterIP      10.100.245.71    <none>                                                                    3000/TCP       35d
+
+NAME                          READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/frontend      3/3     3            3           35d
+deployment.apps/frontendnew   3/3     3            3           3m43s
+deployment.apps/prodcatalog   1/1     1            1           35d
+deployment.apps/proddetail    3/3     3            3           35d
+admin:~ $ 
+As shown above, there is a frontendnew service and frontendnew deployment with three pods.
+
+Let’ s verify that the IPs of the pods in the frontendnew deployment matches the endpoint IPs in the ``frontendnew` service.
+kubectl get pods -n workshop --selector app=frontendnew -o wide
+
+Output
+
+NAME                          READY   STATUS    RESTARTS   AGE   IP               NODE                                           NOMINATED NODE   READINESS GATES
+frontendnew-89d5f6899-2q545   1/1     Running   0          76s   192.168.79.64    ip-192-168-94-155.eu-west-1.compute.internal   <none>           <none>
+frontendnew-89d5f6899-kw6gb   1/1     Running   0          76s   192.168.90.221   ip-192-168-94-155.eu-west-1.compute.internal   <none>           <none>
+frontendnew-89d5f6899-mhdw2   1/1     Running   0          76s   192.168.52.241   ip-192-168-54-155.eu-west-1.compute.internal   <none>           <none>
+Note : You can alternatively use kubectl get pods -n workshop -l=app=frontendnew -o wide which would show the same output. If you’ d like to see all the labels for all the pods, you can use kubectl get pods --show-labels -n workshop.
+
+Let’ s check the endpoints in the service frontendnew.
+kubectl describe service frontendnew -n workshop
+
+Output
+
+Name:              frontendnew
+Namespace:         workshop
+Labels:            <none>
+Annotations:       <none>
+Selector:          app=frontendnew
+Type:              ClusterIP
+IP Family Policy:  SingleStack
+IP Families:       IPv4
+IP:                10.100.40.215
+IPs:               10.100.40.215
+Port:              http  80/TCP
+TargetPort:        80/TCP
+Endpoints:         192.168.52.241:80,192.168.79.64:80,192.168.90.221:80
+Session Affinity:  None
+Events:            <none>
+As shown in the above output, the endpoints match the IP addresses of the pods in the deployment frontendnew.
+
+Note : Do keep in mind that we intentionally created the frontendnew service as ClusterIP type of service. This will be explained in the next section.
+
+9. Review Ingress and Application Load Balancer
+Let’ s review the Ingress again.
+kubectl describe ingress workshopingress -n workshop
+
+Output
+
+Name:             workshopingress
+Namespace:        workshop
+Address:          k8s-productcatalog-ec87bdf649-1995935763.eu-west-1.elb.amazonaws.com
+Default backend:  default-http-backend:80 (<error: endpoints "default-http-backend" not found>)
+Rules:
+  Host        Path  Backends
+  ----        ----  --------
+  *           
+              /new   frontendnew:80 (192.168.52.241:80,192.168.79.64:80,192.168.90.221:80)
+  *           
+              /   frontend:80 (192.168.55.37:9000,192.168.66.93:9000,192.168.74.119:9000)
+Annotations:  alb.ingress.kubernetes.io/group.name: product-catalog
+              alb.ingress.kubernetes.io/scheme: internet-facing
+              alb.ingress.kubernetes.io/target-type: ip
+Events:
+  Type    Reason                  Age                  From     Message
+  ----    ------                  ----                 ----     -------
+  Normal  SuccessfullyReconciled  3m18s (x6 over 66m)  ingress  Successfully reconciled
+admin:~ $ 
+As you can see above, this time the first rule with /new path defined has endpoints defined, which are the IP addresses of the endpoints of the Kubernetes service frontendnew.
+
+Let’ s now check the Listener Rules and the target groups on the Application Load Balancer.
+
+There is now a target group configured for the first http rule. The name of the target group is in the format of k8s-<k8s-namespace-name>-<k8s-backend-service-name>-randomstring. Let’ s see what is defined in that target group by clicking on it. Note that this will open up a new tab in your browser so do not forget to close the tab when you want to get back to the Listeners view.
+As shown above, the IP addresses match the IPs of the pods in the frontendnew deployment, which are also the endpoints in the frontendnew service. This validates that even when the backend service for an Ingress is a Kubernetes service type of ClusterIP the Ingress feature of Kubernetes and the target-type mode ip feature of the Application Load Balancer makes this service accessible to clients external to the Kubernetes cluster.
+
+At this stage you should be able to access the Product Catalog Application’ s imaginary new version by navigating to the Application Load Balancer DNS name by specifying the path /new at the end. These requests simply match the first rule rule defined in the Ingress and be routed to the backend service called frontendnew. Let’ s verify that.
+
+10. Environment Summary
+In the current set up, an important thing to note here is that the frontend service is type of LoadBalancer and frontendnew service type is ClusterIP. However this does not make any difference from AWS Application Load Balancer point of view because the load balancer always sends the requests directly to the pod IPs because of the target-mode mode ip annotation used in the Ingress manifest. It is worth mentioning the other pods within the cluster can still send requests against the internal DNS name and service Virtual IP of the frontend and frontendnew Kubernetes services.
+
+One other thing to highlight here is about security. AWS Load Balancer Controller also automatically updates the security group configuration of the Kubernetes worker nodes and the Application Load Balancer so that the traffic from the AWS Application Load Balancer (as the source) to the pods (backing the service) is allowed. You can investigate this by examining the AWS Security Groups in your environment.
+
+This concludes the Ingress section.
+

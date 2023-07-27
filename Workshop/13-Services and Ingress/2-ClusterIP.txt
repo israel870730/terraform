@@ -1,0 +1,168 @@
+In this section we will explore the service type of ClusterIP. The focus will be the Catalog Detail tier of the Product Catalog application, which is represented with proddetail deployment and proddetail service in the workshop namespace.
+
+ClusterIP is the default service type and it is used for making the service reachable/accessible only from within the cluster; meaning that only the pods within the cluster can access it. This is achieved by exposing the service on a virtual IP address which exists on each worker node. This IP address is not announced nor shared with anywhere external to the cluster.
+
+How is the virtual IP address implemented ? (Click to expand)
+The service virtual IP is assigned from a pool which is configured by setting the -—service-cluster-ip-range parameter in the kube-apiserver. Amazon EKS allows you to configure this parameter during the cluster creation process  as an optional step. If not configured explicitly then Amazon EKS provisions either 10.100.0.0/16 or 172.20.0.0/16.
+
+The service virtual IP address is configured on each worker node by a component called kube-proxy  which is a process that runs on all the worker nodes. As mentioned earlier this virtual IP is not announced to anywhere exteranl to the Kubernetes cluster. That is the exact reason why other pods in the same cluster can access this service virtual IP however an external client/user cannot.
+
+A generic visual representation of the ClusterIP is shown below. The client, which is the pod on the far left, sends a request to the service. The request then gets load balanced and forwarded to one of the pods backing that service.
+
+How exactly is the load balancing/forwarding implemented ? (Click to expand)
+The load balancing and forwarding logic is based on the kube-proxy mode. Kube-proxy has different implementation modes (iptables, ipvs  and others ). Amazon EKS by default has kube-proxy  implemented in iptables mode. This can be verified as shown below on the Amazon EKS cluster.
+
+kubectl get cm kube-proxy-config -n kube-system -o yaml | grep mode
+
+Sample Output (omitted)
+
+mode: "iptables"
+When a pod sends a request to the service virtual IP, the packet is processed by the iptables rules on that worker node which are configured by the kube-proxy. A pod backing that service is chosen based on random or session affinity and then destination network address translation (DNAT) is applied. Basically, the destination IP address field in the IP header of the packet is changed from the service virtual IP address to the selected pod IP address.
+
+Note : If you’ d like to get more details on iptables rules in your environment then you can connect to the Amazon EC2 worker nodes and use sudo iptables -t nat -L -n to examine the relevant rules.
+
+In the upcoming steps, we will demonstrate how the list of endpoints (pods) automatically gets updated and how requests get forwarded to the available endpoints.
+
+1. Review the service
+Describe the proddetail service.
+kubectl describe service proddetail -n workshop
+
+Sample Output
+
+Name:              proddetail
+Namespace:         workshop
+Labels:            app=proddetail
+                   app.kubernetes.io/managed-by=Helm
+Annotations:       meta.helm.sh/release-name: workshop
+                   meta.helm.sh/release-namespace: default
+Selector:          app=proddetail
+Type:              ClusterIP
+IP Family Policy:  SingleStack
+IP Families:       IPv4
+IP:                10.100.245.71
+IPs:               10.100.245.71
+Port:              http  3000/TCP
+TargetPort:        3000/TCP
+Endpoints:         192.168.4.217:3000
+Session Affinity:  None
+Events:            <none>
+In summary proddetail service picks all the pods that have a label of app : proddetail as the endpoints of this service.
+
+In the output shown above,
+
+Labels (app=proddetail), the label of the service itself. This is not the one used for identifying pods.
+Selector (app=proddetail) , the service identifies and selects the pods which have this label
+IP (10.100.245.71) shows the service virtual IP.
+Port (http 3000) , name assigned to the port and the actual port number assigned to the port which the service listens on each worker node.
+TargetPort (3000) , the port which the application listens on the pod.
+Endpoints , the list of the endpoints (pods) backing the service. There is a single endpoint in this list since there is a single pod in proddetail deployment. IP you see here is that single pod' s IP.
+Note : IP Family Policy , IP Families and IPs fields are all related to dual-stack environments. For more information please have a look at IPv4/IPv6 Dual Stack  of the Kubernetes documentation and Services  section of the Kubernetes API guide.
+
+What does the actual manifest file, used to create the proddetail service, look like ? (Click to expand)
+How can we verify the way endpoints get picked ? (Click to expand)
+Kubernetes DNS (CoreDNS  by default in EKS) created an A record for this service which points out to the service virtual IP of the service. The format of the DNS name  for the service is <service-name>.<namespace-name>.svc.<cluster-domain-name>. In this case it is proddetail.workshop.svc.cluster.local.
+
+2. Scale out the deployment
+Scale the proddetail deployment to three pods.
+kubectl scale deployment proddetail --replicas=3 -n workshop
+
+Output
+
+deployment.apps/proddetail scaled
+Note : You can optionally verify the rollout status of the deployment using kubectl rollout status deployment proddetail -n workshop
+
+Verify the number of pods in the deployment shows 3/3 in the READY column. This may take a minute or two.
+kubectl get deployments -n workshop
+
+Output
+
+NAME          READY   UP-TO-DATE   AVAILABLE   AGE
+frontend      1/1     1            1           6d13h
+prodcatalog   1/1     1            1           6d13h
+proddetail    3/3     3            3           6d13h
+
+5. Review the updated list of endpoints
+Verify that the list of endpoints has changed for the service.
+kubectl describe service proddetail -n workshop
+
+Sample Output
+
+Name:              proddetail
+Namespace:         workshop
+Labels:            app=proddetail
+                   app.kubernetes.io/managed-by=Helm
+Annotations:       meta.helm.sh/release-name: workshop
+                   meta.helm.sh/release-namespace: default
+Selector:          app=proddetail
+Type:              ClusterIP
+IP Family Policy:  SingleStack
+IP Families:       IPv4
+IP:                10.100.245.71
+IPs:               10.100.245.71
+Port:              http  3000/TCP
+TargetPort:        3000/TCP
+Endpoints:         192.168.4.217:3000,192.168.60.62:3000,192.168.73.177:3000
+Session Affinity:  None
+Events:            <none>
+We can now see that Endpoints shows three IP addresses which belong to the pods that are part of the proddetail deployment.
+
+To perform a more detailed verification and review the individual endpoints (pods) then please click to expand
+6. Environment summary
+So far we scaled out the Catalog Detail tier of the application (proddetail deployment) earlier. We also verified how the list of endpoints changed in the service.
+
+A visual representation of the current state of the application is shown below. Let’ s now look at how the pod, in the Product Catalog tier, would access the Catalog Detail tier.
+
+When the Prod Catalog pod (on the far left) sends a request for the proddetail service DNS Name/service virtual IP address, the request will get load balanced/forwarded to one of the pods backing the service.
+
+7. Reachability tests
+Let's identify the pod name of the prodcatalog pod in the environment and then get a shell to that pod.
+prodcatalogpod=$(kubectl get pods -n workshop | awk '{print $1}' | grep -e "prodcatalog")
+kubectl exec -it $prodcatalogpod -n workshop -- sh
+
+Output
+
+#
+In the same shell, let' s test the reachability to the proddetail service using curl. We will call out the service by using the service name, the port that service listens on and the actual path that the application responds to. (shown below)
+curl proddetail:3000/catalogdetail
+
+Output
+
+{"version":"1","vendors":["ABC.com"]}
+As you can see it is successful.
+
+How is typing only `proddetail` enough to resolve to the DNS name of the actual service ? (Click to expand)
+How about testing with `ping` ? Do you think it would work ? If you' d like to explore that please click to expand
+
+8. Scale in the deployment
+While you are still in prodcatalog pod' s shell, start a curl loop and keep it running as shown below.
+while sleep 1; do curl proddetail.workshop:3000/catalogdetail; done
+
+Output
+
+{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}
+Let’ s now scale in the deployment back to one pod and observe if that causes any impact on the ongoing curl requests sent to the proddetail service.
+
+Open a separate/new terminal window and then scale in the deployment using the following command.
+kubectl scale deployment proddetail --replicas=1 -n workshop
+
+Output
+
+deployment.apps/proddetail scaled
+
+Verify the number of pods in the proddetail deployment shows 1/1 in the READY column. This may take a minute or two.
+kubectl get deployment -n workshop
+
+Output
+
+NAME          READY   UP-TO-DATE   AVAILABLE   AGE
+frontend      1/1     1            1           6d14h
+prodcatalog   1/1     1            1           6d14h
+proddetail    1/1     1            1           6d14h
+
+Exit the recently opened terminal window; then navigate back to the original terminal window where you have prodcatalog pod' s shell and verify that there are no failure or time out messages in the output of curl loop.
+Output
+
+{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}{"version":"1","vendors":["ABC.com"]}
+While in prodcatalog pod' s shell, use CTRL+C and then type exit.
+This concludes the ClusterIP section.
+

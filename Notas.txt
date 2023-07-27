@@ -1,0 +1,65 @@
+1- Como ver los eventos del cluster EKS ordenados:
+kubectl -n workshop get events --sort-by='.metadata.creationTimestamp'
+
+2- Para ver los nodos y un poco mas de info:
+alias kgn='kubectl get nodes -L beta.kubernetes.io/arch -L eks.amazonaws.com/capacityType -L beta.kubernetes.io/instance-type -L eks.amazonaws.com/nodegroup -L topology.kubernetes.io/zone -L karpenter.sh/provisioner-name -L karpenter.sh/capacity-type'
+
+3- Instalar kubectx and kubens 
+4- kubectl logs nombre-del-pod and kubectl describe pods
+
+5- Instalar eks-node-viewer:
+go install github.com/awslabs/eks-node-viewer/cmd/eks-node-viewer@latest
+sudo mv -v ~/go/bin/eks-node-viewer /usr/local/bin
+
+6- kubectl get sc,pv,pvc -A
+
+
+############ Tips de kubectl - Probarlos ##############
+alias k=kubectl
+kubectl get events -w --field-selector=type=Warning -A
+kubectl get pods --watch --output-watch-events
+kubectl wait --for=condition=ready pod -l foo=bar
+kubectl set env pod/podname --list
+kubectl top pods -A --sort-by='memory'
+
+
+
+
+https://workshops.aws/
+https://catalog.workshops.aws/eks-immersionday/en-US
+
+Para ver los addons instalados en un cluster:
+eksctl get addon --cluster $CLUSTER
+
+
+
+
+
+Password para k8sInteg:
+J3bIb*!nKfW%320JAHoAwZR1Dw
+
+
+
+aws sts assume-role \
+  --role-arn arn:aws:iam::114712064551:role/eks-admin-20230616 \
+  --role-session-name k8sInteg-session \
+  --profile k8sInteg
+
+ 
+
+credentials=$(aws sts assume-role --role-arn arn:aws:iam::114712064551:role/Cross-account-role-monitoring-account --role-session-name "poc" | jq ".Credentials")
+export AWS_ACCESS_KEY_ID=$(echo $credentials | jq -r ".AccessKeyId")
+export AWS_SECRET_ACCESS_KEY=$(echo $credentials | jq -r ".SecretAccessKey")
+export AWS_SESSION_TOKEN=$(echo $credentials | jq -r ".SessionToken")
+
+ 
+
+2 : Access EKS
+
+aws eks --region eu-west-2 update-kubeconfig --name devops-cluster-eu-west-2
+
+3. You can run kubectl commands from /home/vcs_cloudops location
+
+
+accessKey: AKIAQKZWTS7WNUCREFPN
+secretKey: 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

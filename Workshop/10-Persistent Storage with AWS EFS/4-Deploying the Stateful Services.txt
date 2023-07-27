@@ -1,0 +1,75 @@
+Deploying the Stateful Services
+
+Next, lets use the PVC in our prodcatalog service to read and write the product details into the EFS file storage. We are using "values-efs.yaml" that has the configuration of PVC and mount path. 
+Click here (https://github.com/aws-containers/eks-app-mesh-polyglot-demo/blob/master/workshop/apps/product_catalog/app_efs.py) to see the application code for this deployment. Click here (https://github.com/aws-containers/eks-app-mesh-polyglot-demo/blob/master/workshop/helm-chart/values-efs.yaml) to see the Helm Values details for this deployment.
+
+cd ~/environment/eks-app-mesh-polyglot-demo
+helm upgrade --reuse-values -f ~/environment/eks-app-mesh-polyglot-demo/workshop/helm-chart/values-efs.yaml workshop workshop/helm-chart/
+
+Verify that the pod for prodcatalog service references the PVC resource named efs-storage-claim created earlier and mounts the backing PV to a local directory named /products.
+
+export PROD_CATALOG=$(kubectl get pods -n workshop -l app=prodcatalog -o jsonpath='{.items[].metadata.name}') 
+kubectl -n workshop describe pod  ${PROD_CATALOG}
+
+The output from the above command will look as follows:
+
+Get the Loadbalancer url
+export LB_NAME=$(kubectl get svc frontend -n workshop -o jsonpath="{.status.loadBalancer.ingress[*].hostname}") 
+echo $LB_NAME
+
+Open the Application using the above Loadbalancer url, you will see the Product Application UI, it will look like this with no products as the file the prodcatalog service reads from EFS is empty.
+
+You can also exec into the pod and see the mount file is empty
+
+export PROD_CATALOG=$(kubectl get pods -n workshop -l app=prodcatalog -o jsonpath='{.items[].metadata.name}') 
+kubectl -n workshop exec -it ${PROD_CATALOG} -c prodcatalog -- /bin/bash
+
+You will see that the file is empty
+
+root@prodcatalog-xxx-htkxx:/app# cat /products/products.txt 
+root@prodcatalog-xxx-htkxx:/app# 
+
+Now lets add a product Mike with ID as 1 to the Product Catalog from the UI, it will show below product added.
+
+Now again exec into the pod and see the mount file
+
+1
+2
+export PROD_CATALOG=$(kubectl get pods -n workshop -l app=prodcatalog -o jsonpath='{.items[].metadata.name}') 
+kubectl -n workshop exec -it ${PROD_CATALOG} -c prodcatalog -- /bin/bash
+
+You will see that the product Mike with ID as 1 is added to the Product Catalog
+
+root@prodcatalog-77d9565d85-htkxx:/app# cat /products/products.txt 
+1 Mike
+So far we have one replica of prodcatalog service
+ kubectl get pod -n workshop
+
+NAME                           READY   STATUS    RESTARTS   AGE
+frontend-xxx-2dqjw       1/1     Running   0          5d5h
+prodcatalog-xxx-htkxx   1/1     Running   0          15m
+proddetail-xxx-wtpcf    1/1     Running   0          3d21h
+EFS has the capability to mount the same persistent volume to multiple pods at the same time using the ReadWriteMany access mode.
+
+Now lets scale the prodcatalog service to 2 replicas and see whether the second pod is able to successfully read the same data from the shared persistent volume.
+
+kubectl scale --replicas=2 deployment/prodcatalog -n workshop
+
+kubectl get pod -n workshop
+
+The output will be
+
+NAME                           READY   STATUS              RESTARTS   AGE
+frontend-xxx-2dqjw       1/1     Running             0          5d5h
+prodcatalog-xxx-htkxx   1/1     Running             0          16m
+prodcatalog-xxx-nmzmd   0/1     ContainerCreating   0          4s
+proddetail-xxx-wtpcf    1/1     Running             0          3d21h
+Now lets exec into the new pod e.g. prodcatalog-xxx-nmzmd in the above case and and then see the content of the shared file of this pod. Make sure to replace the <REPLACE_WITH_NEW_POD-NAME> in the below command with new pod name.
+
+kubectl -n workshop exec -it <REPLACE_WITH_NEW_POD-NAME>  -c prodcatalog -- /bin/bash
+You will see that the product Mike with ID as 1 is there same as the previous replica pod
+
+root@prodcatalog-xxx-nmzmd:/app# cat /products/products.txt
+1 Mike
+
+Congratulations to complete this! In this chapter, we created an EFS file system and used that to save and retrieve the products for our Product Catalog Application and also shared EFS based persistent volume with the multiple replicas of prodcatalog pod.

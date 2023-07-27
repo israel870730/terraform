@@ -1,0 +1,128 @@
+Test Scaling
+More followers can be added to the MySQL Cluster to increase read capacity. This can be done by following command.
+
+kubectl -n workshop scale statefulset mysql --replicas=3
+
+You can see the message that StatefulSet "mysql" scaled.
+
+statefulset "mysql" scaled
+
+Watch the progress of ordered and graceful scaling.
+kubectl -n workshop rollout status statefulset mysql
+
+Output:
+Waiting for 1 pods to be ready...
+partitioned roll out complete: 3 new pods have been updated...
+
+It may take few minutes to launch all the pods.
+Open another terminal to check loop if you closed it.
+
+kubectl -n workshop run mysql-client-loop --image=mysql:5.7 -i -t --rm --restart=Never --\
+   bash -ic "while sleep 1; do mysql -h mysql-read -e 'SELECT @@server_id,NOW()'; done"
+
+You will see 3 servers are running.
+
++-------------+---------------------+
+| @@server_id | NOW()               |
++-------------+---------------------+
+|         100 | 2020-01-25 02:32:43 |
++-------------+---------------------+
++-------------+---------------------+
+| @@server_id | NOW()               |
++-------------+---------------------+
+|         102 | 2020-01-25 02:32:44 |
++-------------+---------------------+
++-------------+---------------------+
+| @@server_id | NOW()               |
++-------------+---------------------+
+|         101 | 2020-01-25 02:32:45 |
++-------------+---------------------+
+Verify if the newly deployed follower (mysql-2) have the same data set by following command.
+
+kubectl -n workshop run mysql-client --image=mysql:5.7 -it --rm --restart=Never --\
+  mysql -h mysql-2.mysql -e "SELECT * FROM dev.product"
+
+It will show the same data that leader has.
+
++--------+---------------+
+| prodId | prodName      |
++--------+---------------+
+| 999    | Mountain Bike |
+| 1000   | Road Bike     |
++--------+---------------+
+Scale down replicas to 2 by following command.
+
+kubectl -n workshop  scale statefulset mysql --replicas=2
+
+You can see StatefulSet "mysql" scaled
+
+statefulset "mysql" scaled
+Note that scale in doesn't delete the data or PVCs attached to the pods. You have to delete them manually.
+Check scale in is completed by following command.
+
+kubectl -n workshop get pods -l app=mysql
+
+Output
+NAME      READY     STATUS    RESTARTS   AGE
+mysql-0   2/2       Running   0          1d
+mysql-1   2/2       Running   0          1d
+
+Check data-mysql-2 PVCs still exist by following command.
+
+kubectl -n workshop  get pvc -l app=mysql
+
+Output:
+NAME           STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   AGE
+data-mysql-0   Bound    pvc-fdb74a5e-ba51-4ccf-925b-e64761575059   10Gi       RWO            mysql-gp2      18m
+data-mysql-1   Bound    pvc-355b9910-c446-4f66-8da6-629989a34d9a   10Gi       RWO            mysql-gp2      17m
+data-mysql-2   Bound    pvc-12c304e4-2b3e-4621-8521-0dc17f41d107   10Gi       RWO            mysql-gp2      9m35s
+
+ChallengeHeader anchor link
+By default, deleting a PersistentVolumeClaim will delete its associated persistent volume. What if you wanted to keep the volume?
+
+Change the reclaim policy of the PersistentVolume associated with PersistentVolumeClaim called "data-mysql-2" to "Retain". Please see Kubernetes documentation https://kubernetes.io/docs/tasks/administer-cluster/change-pv-reclaim-policy/() for help
+
+Expand here to see the solution
+Change the reclaim policy:
+
+First see the existing Reclaim Policy
+kubectl get persistentvolume
+
+NAME                                       CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS   CLAIM                        STORAGECLASS   REASON   AGE
+pvc-472b952c-31d4-4223-8bd0-37fa562da333   10Gi       RWO            Delete           Bound    workshop/data-mysql-0        mysql-gp2               155m
+pvc-68855a99-4745-453c-b17e-d3ef3037bc46   10Gi       RWO            Delete           Bound    workshop/data-mysql-2        mysql-gp2               18m
+pvc-7aca3d24-6379-47ea-baec-6fb8218bd1ce   10Gi       RWO            Delete           Bound    workshop/data-mysql-1        mysql-gp2 
+
+Find the PersistentVolume attached to the PersistentVolumeClaim data-mysql-2
+
+export pv=$(kubectl -n workshop  get pvc data-mysql-2 -o json | jq --raw-output '.spec.volumeName')
+echo data-mysql-2 PersistentVolume name: ${pv}
+
+data-mysql-2 PersistentVolume name: pvc-68855a99-4745-453c-b17e-d3ef3037bc46
+Now update the ReclaimPolicy
+
+kubectl -n workshop patch pv ${pv} -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'
+
+Verify the ReclaimPolicy with this command.
+
+kubectl get persistentvolume
+
+NAME                                       CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS   CLAIM                STORAGECLASS   REASON   AGE
+pvc-12c304e4-2b3e-4621-8521-0dc17f41d107   10Gi       RWO            Retain           Bound    mysql/data-mysql-2   mysql-gp2               9m51s
+pvc-355b9910-c446-4f66-8da6-629989a34d9a   10Gi       RWO            Delete           Bound    mysql/data-mysql-1   mysql-gp2               18m
+pvc-fdb74a5e-ba51-4ccf-925b-e64761575059   10Gi       RWO            Delete           Bound    mysql/data-mysql-0   mysql-gp2               18m
+
+Now, if you delete the PersistentVolumeClaim data-mysql-2, you can still see the EBS volume in your AWS EC2 console, with its state as "available".
+
+Let's change the reclaim policy back to "Delete" to avoid orphaned volumes:
+
+kubectl patch pv ${pv} -p '{"spec":{"persistentVolumeReclaimPolicy":"Delete"}}'
+unset pv
+
+Delete data-mysql-2 with following commands.
+
+kubectl -n workshop delete pvc data-mysql-2
+
+Output:
+persistentvolumeclaim "data-mysql-2" deleted
+

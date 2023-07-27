@@ -1,0 +1,22 @@
+
+kubectl delete \
+  -f ${HOME}/environment/ebs_statefulset/mysql-services.yaml \
+  -f ${HOME}/environment/ebs_statefulset/mysql-configmap.yaml \
+  -f ${HOME}/environment/ebs_statefulset/mysql-storageclass.yaml \
+  -f ~/environment/eks-app-mesh-polyglot-demo/workshop/mysql-statefulset.yaml
+
+ kubectl -n workshop delete pvc data-mysql-0
+ kubectl -n workshop delete pvc data-mysql-1
+
+# Remove the EBS CSI add on
+eksctl delete addon --cluster eksworkshop-eksctl --name aws-ebs-csi-driver
+
+
+cd ${HOME}/environment
+rm -rf ${HOME}/environment/ebs_statefulset
+
+cd ~/environment/eks-app-mesh-polyglot-demo
+helm upgrade --reuse-values -f ~/environment/eks-app-mesh-polyglot-demo/workshop/helm-chart/values.yaml workshop workshop/helm-chart/
+
+
+For Managing the Amazon EBS CSI driver as an EKS add-on including updating and removing the add-on, please refer to AWS Documentation (https://docs.aws.amazon.com/eks/latest/userguide/managing-ebs-csi.html#adding-ebs-csi-eks-add-on)

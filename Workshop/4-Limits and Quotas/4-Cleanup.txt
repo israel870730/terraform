@@ -1,0 +1,7 @@
+Cleanup
+Remove LimitRanges and ResourceQuotas from the workshop Namespace.
+
+kubectl -n workshop delete pod nginx
+kubectl -n workshop delete resourcequotas object-quota 
+kubectl -n workshop delete limitrange cpu-limit-range
+kubectl -n workshop delete limitrange memory-constraint
