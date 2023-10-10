@@ -1,0 +1,4 @@
+https://www.youtube.com/watch?v=33VEu9Kqvno
+https://docs.fluentbit.io/manual/installation/kubernetes
+https://docs.fluentbit.io/manual/v/1.8/installation/kubernetes
+https://github.com/adityajoshi12/distributed-logging

@@ -1,0 +1,8 @@
+Para instalar Prometheus y Grafana
+kubectl create namespace prometheus-community
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+helm install foo prometheus-community/kube-prometheus-stack
+
+Desinstalar:
+helm uninstall foo

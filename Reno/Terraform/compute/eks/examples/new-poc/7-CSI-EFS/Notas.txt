@@ -1,0 +1,50 @@
+https://repost.aws/es/knowledge-center/eks-pods-encryption-efs
+
+https://docs.aws.amazon.com/eks/latest/userguide/efs-csi.html
+
+
+
+
+helm repo add aws-efs-csi-driver https://kubernetes-sigs.github.io/aws-efs-csi-driver/
+
+
+helm upgrade --install aws-efs-csi-driver --namespace kube-system aws-efs-csi-driver/aws-efs-csi-driver \
+--set controller.serviceAccount.create=false \
+--set controller.serviceAccount.name=efs-csi-controller-sa \
+--set controller.serviceAccount.create=false \
+--set controller.serviceAccount.name=efs-csi-node-sa
+
+
+Run the following commands to capture the VPC-ID.
+aws eks describe-cluster --name eks-new-poc --query "cluster.resourcesVpcConfig.vpcId" --output text --region=us-east-1
+
+Capture the CIDR block, using the VPC-ID
+aws ec2 describe-vpcs --vpc-ids vpc-01b3f79ec3258feea --query "Vpcs[].CidrBlock" --output text --region=us-east-1
+
+
+
+aws ec2 create-security-group --group-name new-efs --description new-efs --vpc-id vpc-01b3f79ec3258feea | jq --raw-output '.GroupId'
+aws ec2 authorize-security-group-ingress --group-id sg-089e3fde4c6a04aaf --protocol tcp --port 2049 --cidr 10.196.0.0/16
+
+
+
+aws ec2 describe-subnets \
+    --filters "Name=vpc-id,Values=vpc-01b3f79ec3258feea" "Name=$TAG1,Values=Public" \
+    --query 'Subnets[*].{SubnetId: SubnetId,AvailabilityZone: AvailabilityZone,CidrBlock: CidrBlock}' \
+    --output table
+
+
+
+
+aws efs create-mount-target --file-system-id fs-0a637b19521baa6be --subnet-id subnet-0e7156137b132b4d4 --security-group sg-089e3fde4c6a04aaf
+aws efs create-mount-target --file-system-id fs-0a637b19521baa6be --subnet-id subnet-0317395362f590466 --security-group sg-089e3fde4c6a04aaf
+aws efs create-mount-target --file-system-id fs-0a637b19521baa6be --subnet-id subnet-08554b785c0f51f6b --security-group sg-089e3fde4c6a04aaf
+aws efs create-mount-target --file-system-id fs-0a637b19521baa6be --subnet-id subnet-0463a4913b8ec174f --security-group sg-089e3fde4c6a04aaf
+aws efs create-mount-target --file-system-id fs-0a637b19521baa6be --subnet-id subnet-0ba8e9d95c6331805 --security-group sg-089e3fde4c6a04aaf
+aws efs create-mount-target --file-system-id fs-0a637b19521baa6be --subnet-id subnet-05eaa80aa72a22b40 --security-group sg-089e3fde4c6a04aaf
+
+aws efs describe-mount-targets --file-system-id fs-0a637b19521baa6be | jq --raw-output '.MountTargets[].LifeCycleState'
+
+
+
+

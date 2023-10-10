@@ -23,39 +23,34 @@ kubectl set env pod/podname --list
 kubectl top pods -A --sort-by='memory'
 
 
-
-
-https://workshops.aws/
-https://catalog.workshops.aws/eks-immersionday/en-US
-
 Para ver los addons instalados en un cluster:
 eksctl get addon --cluster $CLUSTER
 
 
-
-
-
-Password para k8sInteg:
-J3bIb*!nKfW%320JAHoAwZR1Dw
-
-
-
-aws sts assume-role \
-  --role-arn arn:aws:iam::114712064551:role/eks-admin-20230616 \
-  --role-session-name k8sInteg-session \
-  --profile k8sInteg
-
- 
-
-credentials=$(aws sts assume-role --role-arn arn:aws:iam::114712064551:role/Cross-account-role-monitoring-account --role-session-name "poc" | jq ".Credentials")
-export AWS_ACCESS_KEY_ID=$(echo $credentials | jq -r ".AccessKeyId")
-export AWS_SECRET_ACCESS_KEY=$(echo $credentials | jq -r ".SecretAccessKey")
-export AWS_SESSION_TOKEN=$(echo $credentials | jq -r ".SessionToken")
-
- 
-
-2 : Access EKS
-
-aws eks --region eu-west-2 update-kubeconfig --name devops-cluster-eu-west-2
-
 3. You can run kubectl commands from /home/vcs_cloudops location
+
+###############################################################################
+                  Para acceder a las cuentas
+###############################################################################
+Nota: antes de ejecutar cualquier script exportar el perfil que vamos a usar:
+- export AWS_PROFILE=poc
+
+    Para los ambientes que se precise MFA:
+    - aws sts get-session-token --serial-number arn:aws:iam::########:mfa/user --token-code code-from-token
+
+    - export AWS_ACCESS_KEY_ID=example-access-key-as-in-previous-output
+    - export AWS_SECRET_ACCESS_KEY=example-secret-access-key-as-in-previous-output
+    - export AWS_SESSION_TOKEN=example-session-token-as-in-previous-output
+
+Si hay algun problema, chequear que usuario esta logueado en la CLI
+- aws sts get-caller-identity
+
+Si precisas cambiar la region en la que estas trabajando hay 2 opciones o la exportas usando:
+export AWS_DEFAULT_REGION=us-west-1
+
+o la puedes poner al final del comando que quieras usar, por ejemplo en este caso para ver las vpc que tengo en una region:
+aws ec2 describe-vpcs --filters  --query "Vpcs[].{VpcId:VpcId,CIDR:CidrBlock}" --region us-west-1
+
+https://repost.aws/es/knowledge-center/authenticate-mfa-cli
+
+

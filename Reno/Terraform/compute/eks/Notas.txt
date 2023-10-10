@@ -1,0 +1,4 @@
+aws eks update-kubeconfig --name eks-new-poc --region us-east-1 --alias eks-new-poc
+
+- View your cluster's OIDC provider URL. Replace my-cluster with your cluster name.
+aws eks describe-cluster --name eks-new-poc --query "cluster.identity.oidc.issuer" --output text
