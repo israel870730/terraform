@@ -1,3 +1,5 @@
 https://github.com/aws-ia/terraform-aws-eks-blueprints
 https://www.youtube.com/watch?v=KE504NwP9vs
 https://github.com/aws-ia/terraform-aws-eks-blueprints/tree/main/patterns/blue-green-upgrade
+
+aws eks update-kubeconfig --region us-west-1 --name demo --profile poc

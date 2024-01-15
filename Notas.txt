@@ -54,3 +54,6 @@ aws ec2 describe-vpcs --filters  --query "Vpcs[].{VpcId:VpcId,CIDR:CidrBlock}" -
 https://repost.aws/es/knowledge-center/authenticate-mfa-cli
 
 
+# Para eliminar la cache de terragrunt
+find ./ -type f -name .terraform.lock.hcl | xargs rm -rf
+find ./ -type d -name .terraform | xargs rm -rf

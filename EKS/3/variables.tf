@@ -74,3 +74,19 @@ variable "aws_auth_roles" {
   type        = list(any)
   default     = []
 }
+
+variable "public_subnet_tags" {
+  description = "Subnet Tags to find database subnets"
+  type        = map
+  default = {
+    Name = "Public"
+  }
+}
+
+variable "private_subnet_tags" {
+  description = "Subnet Tags to find database subnets"
+  type        = map
+  default = {
+    Name = "Private"
+  }
+}

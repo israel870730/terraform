@@ -1,7 +1,6 @@
 resource "aws_security_group" "ec2" {
   name        = "ec2-sg"
   description = "Allow efs outbound traffic"
-  #vpc_id      = aws_vpc.vpc.id
   vpc_id = module.vpc.vpc_id
   ingress {
      cidr_blocks = ["0.0.0.0/0"]
@@ -16,7 +15,7 @@ resource "aws_security_group" "ec2" {
     cidr_blocks     = ["0.0.0.0/0"]
   }
   tags = {
-    Name = "allow_efs"
+    Name = "ec2-sg"
   }
 }
 
@@ -38,4 +37,7 @@ resource "aws_security_group" "efs" {
      to_port = 0
      protocol = "-1"
    }
+   tags = {
+    Name = "efs-sg"
+  }
  }

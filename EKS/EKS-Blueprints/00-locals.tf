@@ -5,6 +5,5 @@ locals {
 #   region       = var.region
 #   bucket_name  = "${var.env}-${var.region}-${var.project_name}-eks-pod-log"
    tags = var.tags
-#   provisionerrole = var.provisionerrole
-   hosted_zone_name  = "deployment.vcsgreenbox.com"                          
+#   provisionerrole = var.provisionerrole                         
 }

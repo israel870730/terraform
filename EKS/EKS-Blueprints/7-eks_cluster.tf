@@ -16,7 +16,7 @@ module "eks_blueprints" {
   #   },
   # ]
 
-  fargate_profiles = {
+  /*fargate_profiles = {
     staging = {
       fargate_profile_name = "staging"
       # subnet_ids = [
@@ -28,7 +28,7 @@ module "eks_blueprints" {
         { namespace = "staging" }
       ]
     }
-  }
+  }*/
 
   # vpc_id = aws_vpc.main.id
   vpc_id = module.vpc.vpc_id
@@ -38,19 +38,22 @@ module "eks_blueprints" {
   #   aws_subnet.private_us_east_1b.id
   # ]
   private_subnet_ids = module.vpc.private_subnets
+  cluster_enabled_log_types = ["audit", "api", "authenticator", "controllerManager", "scheduler"]
 
   managed_node_groups = {
     role = {
       capacity_type   = "ON_DEMAND"
       node_group_name = "general"
-      
       instance_types  = ["t3a.xlarge"]
       desired_size    = "1"
       max_size        = "5"
       min_size        = "1"
+      enable_bootstrap_user_data = true
+      #additional_tags = { ExtraTag = "Fargate" }
 
-      name            = "demo"
-      tags            = local.tags
+      #name            = "ON_DEMAND"
+      #ami_id = "ami-0edd73fffdd8574b5"
+      #enable_bootstrap_user_data = true      
     }
   }
   tags = local.tags
